@@ -7,8 +7,8 @@
 #    http://shiny.rstudio.com/
 #
 
-# source('D:/CRTI/r_projects/chicago_tree_dam/chicago_tree_ui.r')
-# runApp('chicago_tree_ui.r')
+# source('D:/CRTI/r_projects/shinyapp/chicago_tree_ui/app.R')
+# runApp('app.R')
 
 # Load packages
 library(shiny)
@@ -18,8 +18,10 @@ library(ggplot2)
 
 # Get data and helper functions from Richard's program
 #source('D:/CRTI/r_projects/chicago_tree_dam/chicagotree_dam.r')
+#ctree <- readChicagoTree()
+
 source("https://don-morrison-2000.github.io/source/chicagotree_dam.r")
-ctree <- readChicagoTree()
+ctree <- readChicagoTree(infile='dupage_county_accepted_V1.csv', path='https://don-morrison-2000.github.io/data/')
 land_use <- landUse
 species <- c(commonSpecies$V1, "Other")
 
