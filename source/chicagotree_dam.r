@@ -43,15 +43,17 @@ chgotreepath='D:/CRTI/data/'
 
 readChicagoTree=function(infile='cleaned/dupage_county_accepted_V1.csv',path=chgotreepath)
 {
- input=paste(chgotreepath,infile,sep='')
+ input=paste(path,infile,sep='')
  y=read.delim(input,as.is=TRUE,sep=',')      ## Use as.is=TRUE to make sure species names are characters, not factors
  return(y) 
 }
 
 # Same excel file has a sheet with species names. Save as tab-delimited text 'Trees_DuPage_to_Rick_species.csv'
-commonSpecies=unique(read.delim(paste(chgotreepath,'Trees_DuPage_to_Rick_species.csv',sep=''),as.is=TRUE,header=FALSE))
-landUse=read.delim(paste(chgotreepath,'Trees_DuPage_to_Rick_land_use.csv',sep=''),as.is=TRUE,header=FALSE)
-
+#commonSpecies=unique(read.delim(paste(chgotreepath,'Trees_DuPage_to_Rick_species.csv',sep=''),as.is=TRUE,header=FALSE))
+#landUse=read.delim(paste(chgotreepath,'Trees_DuPage_to_Rick_land_use.csv',sep=''),as.is=TRUE,header=FALSE)
+commonSpecies <- unique(read.delim('https://don-morrison-2000.github.io/data/common_species.csv',as.is=TRUE,header=FALSE))
+landUse <- read.delim('https://don-morrison-2000.github.io/data/land_use.csv',as.is=TRUE,header=FALSE)
+    
 ## For modeling a single species, a table is needed for that species. A column occur is created
 ## occur is set = 1 for each record of that species and = 0 for all other species records. 
 ## This function creates such a table for one species, starting with result of readChicagoTree and passing one Latin name.
