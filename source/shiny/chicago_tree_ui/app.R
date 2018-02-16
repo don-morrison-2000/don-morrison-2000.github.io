@@ -15,25 +15,53 @@ library(shiny)
 library(shinythemes)
 library(ggplot2)
 
+run_local=FALSE
 
 # Get data and helper functions from Richard's program
-#source('D:/CRTI/r_projects/chicago_tree_dam/chicagotree_dam.r')
-#ctree <- readChicagoTree()
+if (run_local)
+{
+      source('D:/CRTI/r_projects/chicago_tree_dam/chicagotree_dam.r')
+      ctree <- readChicagoTree(path='D:/CRTI/data/', infile='cleaned/dupage_county_accepted_V1.csv')
+} else
+{
+      source("https://don-morrison-2000.github.io/source/chicagotree_dam.r")
+      ctree <- readChicagoTree(infile='dupage_county_accepted_V1.csv', path='https://don-morrison-2000.github.io/data/')
+}
 
-source("https://don-morrison-2000.github.io/source/chicagotree_dam.r")
-ctree <- readChicagoTree(infile='dupage_county_accepted_V1.csv', path='https://don-morrison-2000.github.io/data/')
 land_use <- landUse
 species <- c(commonSpecies$V1, "Other")
 
 # Coerce all non-common species names to "Other"
 ctree[['GENUSSPECI']] <- ifelse ((match(ctree[['GENUSSPECI']], commonSpecies[[1]], nomatch = 0) > 0), ctree[['GENUSSPECI']], "Other")
 
-species_set = "Common species"
-all_predictors = c('BLDG_AGE','HU_DENS', 'DIST_WATER', 'DIST_MINOR', 'DIST_MAJOR', 'PD', 'LPI', 'LSI', 'CROWN_AREA', 'CROWN_COMPACTNESS', 'HEIGHT_MAX', 'HEIGHT_MEAN', 'RELBORDER_TREE', 'DBH_IN')
-all_land_use = c(0:11)
+species_set <- "Common species"
 
-# Cache values
-g_models=list()
+
+# Define all possible predictors then subset to just the ones that show up in the input data
+all_predictors <- c (
+      'Trunk diameter' =           'DBH_IN', 
+      'Crown compactness' =        'CROWN_COMPACTNESS',
+      'Max Height' =               'HEIGHT_MAX',
+      'Mean Height' =              'HEIGHT_MEAN',
+      'Crown area' =               'CROWN_AREA',
+      'Building age' =             'BLDG_AGE',
+      'Housing density' =          'HU_DENS',
+      'Relative border' =          'RELBORDER_TREE',
+      'Patch density' =            'PD',
+      'Largest patch index' =      'LPI',
+      'Landscape shape index' =    'LSI',
+      'Distance to water' =        'DIST_WATER',
+      'Distance to road (minor)' = 'DIST_MINOR',
+      'Distance to road (major)' = 'DIST_MAJOR'
+) 
+all_predictors <- all_predictors[all_predictors %in% colnames(ctree)]
+all_predictors <- all_predictors[order(names(all_predictors))]
+all_land_use <- unique(land_use$V1)
+
+# Model cache
+g_models <- list()
+# Ordered vector of plot predictors
+g_m_preds = character(0)
 
 # Models are maintined in a list with this format [[<<predictor formula]][[<species name]][[<land use desc>]]
 build_model <- function (ctree, predictors, species, land_use)
@@ -73,7 +101,7 @@ build_model <- function (ctree, predictors, species, land_use)
 ui <- fluidPage(theme = shinytheme("lumen"),
                 titlePanel("DuPage County Tree Data"),
                 
-                # Row that shows the probability plot
+                # Row that shows the probability plot and related statistics
                 fluidRow 
                 (
                       column 
@@ -87,7 +115,7 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                         wellPanel
                                         (  
                                               width=8, style = "overflow-y:scroll; min-height: 350px; max-height: 350px",
-                                              plotOutput(outputId = "probability_plot", width = '600px', height = "300px")
+                                              plotOutput(outputId = "probability_plot", width = '600px', height = "300px", dblclick = "plot_dblclick",  brush = brushOpts(id = "plot_brush", resetOnNew = TRUE))
                                         )
                                   ),
                                   tabPanel
@@ -104,7 +132,7 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                 ),
                 
                 
-                # Row with the parameter settings
+                # Row with the input parameter settings
                 fluidRow 
                 (
                       column 
@@ -112,13 +140,7 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                             3,
                             wellPanel
                             (  
-                                  p(strong("Model Predictors")),
-                                  checkboxInput (inputId = "all_model_predictors", label = strong("All"), value = TRUE),
-                                  conditionalPanel
-                                  ( 
-                                        condition = 'input.all_model_predictors == false', 
-                                        checkboxGroupInput (inputId = "model_predictors", label = '', choices = all_predictors, selected = all_predictors[1])
-                                  )
+                                  checkboxGroupInput (inputId = "model_predictors", label = strong("Model Predictors"), choices = all_predictors, selected = all_predictors[1])
                             )
                       ),
                       column 
@@ -158,31 +180,56 @@ ui <- fluidPage(theme = shinytheme("lumen"),
 server <- function(input, output, session) 
 {
       
-      # Update the plot predictors list when the model predictors is updated
-      observeEvent ( c(input$all_model_predictors,input$model_predictors), {
-            
-            m_preds = if (input$all_model_predictors == TRUE) all_predictors else input$model_predictors
-            if (!is.null(m_preds))
+      # Ordered vector of spected model predictors
+      m_preds_ordered <- reactiveValues(list = NULL)
+      
+      # Update the plot predictors list when the model predictors are updated. The order of the plot predictor list reflects
+      # the order that the predictors are listed in the model formula. 
+      observeEvent (input$model_predictors, {
+            m_preds = character(0)
+            if (!is.null(input$model_predictors))
             {
-                  p_choices = m_preds
-                  p_selected = if (input$plot_predictor %in% m_preds) input$plot_predictor else m_preds[1]
+                  # Construct a list of potential plot predictors - in order that they were selected
+                  # Add existing choices (except those that have been deslected)
+                  for (x in g_m_preds) {
+                        if ((x %in% input$model_predictors)) 
+                        {
+                              m_preds <- c(m_preds, all_predictors[all_predictors==x])
+                        }
+                  }
+                  # Add in the newly selected predictors
+                  for (x in input$model_predictors) {
+                        if (!(x %in% m_preds)) 
+                        {
+                              m_preds <- c(m_preds, all_predictors[all_predictors==x])
+                        }
+                  }
             }
-            else
-            {
-                  p_choices = character(0)
-                  p_selected = character(0)
-            }
-            
-            updateRadioButtons(session, "plot_predictor", choices=p_choices, selected=p_selected)
-            
+            # Set the plot predictor list backed on the model predictors and update the UI
+            p_choices = m_preds
+            p_selected = if (input$plot_predictor %in% p_choices) input$plot_predictor else p_choices[1]
+            updateRadioButtons(session, "plot_predictor", choices=as.list(m_preds), selected=p_selected)
+            # Update the reactive value to propagate the new model predictors
+            m_preds_ordered$list <- m_preds
+            g_m_preds <<- m_preds
       })
       
-      # Figure out the intended model predictors
-      resolve_m_preds <- reactive({ 
-            m_preds <- if (input$all_model_predictors == TRUE) all_predictors else input$model_predictors
-            return (m_preds)
-      })
+      # Zoomable plot coordinates
+      ranges <- reactiveValues(x = NULL, y = NULL)
       
+      # When a double-click happens, check if there's a brush on the plot. If so, zoom to the brush bounds; if not, reset the zoom.
+      observeEvent(input$plot_dblclick, {
+            brush <- input$plot_brush
+            if (!is.null(brush)) {
+                  ranges$x <- c(brush$xmin, brush$xmax)
+                  ranges$y <- c(brush$ymin, brush$ymax)
+                  
+            } else {
+                  ranges$x <- NULL
+                  ranges$y <- NULL
+            }
+      })
+
       # Map land use description to its numeric index
       resolve_land_use_desc <- reactive({ 
             if (input$all_land_use == TRUE)
@@ -197,7 +244,7 @@ server <- function(input, output, session)
       
       # Build the models for the coordinates that need to be plotted
       get_models <- reactive({ 
-            m_preds <- resolve_m_preds()
+            m_preds <- m_preds_ordered$list
             land_use <- resolve_land_use_desc()
             species_list <- input$species
             
@@ -220,7 +267,7 @@ server <- function(input, output, session)
       
       # Plot the probabilities
       output$probability_plot <- renderPlot({ 
-            m_preds <- resolve_m_preds()
+            m_preds <- m_preds_ordered$list
             p_pred <- input$plot_predictor
             land_use <- resolve_land_use_desc()
             species_list <- input$species
@@ -247,7 +294,8 @@ server <- function(input, output, session)
                   scale_x_continuous(name='') +
                   scale_y_continuous(limits=c(0,1), name="Probability of occurence") +
                   geom_line(data=regression_coords, aes(x=x, y=y, group=species, colour=species)) +
-                  geom_point(data=occurrence_coords, aes(x=x, y=y, group=species, colour=species))
+                  geom_point(data=occurrence_coords, aes(x=x, y=y, group=species, colour=species))  +
+                  coord_cartesian(xlim = ranges$x, ylim = ranges$y, expand = FALSE)
       })
       
       output$outText <- renderTable({ 
