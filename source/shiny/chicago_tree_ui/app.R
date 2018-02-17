@@ -42,9 +42,10 @@ if (file.exists(ctree_local_file))
 # These come from Richard's modeling program
 land_use <- landUse
 species <- c(commonSpecies$V1, "Other")
+#species <- c("Fraxinus pennsylvanica", "Acer saccharinum", "Gleditsia triacanthos", "Tilia americana", "Other")
 
 # Coerce all non-common species names to "Other"
-ctree[['GENUSSPECI']] <- ifelse ((match(ctree[['GENUSSPECI']], commonSpecies[[1]], nomatch = 0) > 0), ctree[['GENUSSPECI']], "Other")
+ctree[['GENUSSPECI']] <- ifelse ((match(ctree[['GENUSSPECI']], species, nomatch = 0) > 0), ctree[['GENUSSPECI']], "Other")
 
 species_set <- "Common species"
 
@@ -89,7 +90,7 @@ build_model <- function (ctree, predictors, species, land_use)
       {
             if (!is.null(land_use))
             {
-                  ctree <- subset(ctree, as.numeric(LU) %in% land_use)
+                  ctree <- subset(ctree, LU %in% land_use)
             }
             if (nrow(ctree) > 0)
             {
@@ -124,10 +125,23 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                   tabPanel
                                   (
                                         title='Plot',
-                                        wellPanel
-                                        (  
-                                              width=8, style = "overflow-y:scroll; min-height: 350px; max-height: 350px",
-                                              plotOutput(outputId = "probability_plot", width = '600px', height = "300px", dblclick = "plot_dblclick",  brush = brushOpts(id = "plot_brush", resetOnNew = TRUE))
+                                        column 
+                                        ( 
+                                              width=8,
+                                              wellPanel
+                                              (  
+                                                    width=8, style = "overflow-y:scroll; min-height: 350px; max-height: 350px",
+                                                    plotOutput(outputId = "probability_plot", width = '600px', height = "300px", dblclick = "plot_dblclick",  brush = brushOpts(id = "plot_brush", resetOnNew = TRUE))
+                                              )
+                                        ),
+                                        column 
+                                        ( 
+                                              width=2,
+                                              wellPanel
+                                              (  
+                                                    checkboxInput (inputId = "plot_stack", label = strong("Stack"), value=FALSE),
+                                                    checkboxInput (inputId = "plot_observations", label = strong("Observations"), value=FALSE)
+                                              )
                                         )
                                   ),
                                   tabPanel
@@ -290,8 +304,8 @@ server <- function(input, output, session)
             {
                   return (NULL)     
             }
-            regression_coords <- data.frame(x=numeric(), y=numeric(), species_set==character(), species=character(), model_predictors=character(), plot_predictor=character())
-            occurrence_coords <- data.frame(x=numeric(), y=numeric(), species=character(), species=character(), model_predictors=character(), plot_predictor=character())    
+            regression_coords <- data.frame(x=numeric(), y=numeric(), species_set==character(), species=character(), plot_predictor=character())
+            occurrence_coords <- data.frame(x=numeric(), y=numeric(), species=character(), species=character(), plot_predictor=character())    
             
             models <- get_models()
             for (species in species_list)
@@ -299,16 +313,44 @@ server <- function(input, output, session)
                   if (!is.null(models[[species]]))
                   {
                         a <- graphOneResult(full=ctree,mod=models, sp=species,predictor=p_pred, retSpecs=TRUE)
-                        regression_coords <- rbind (regression_coords, data.frame(a[[1]], species_set=rep(species_set, nrow(a[[1]])), species=rep(species, nrow(a[[1]])), model_predictors=rep(m_preds,nrow(a[[1]])), plot_predictor=rep(p_pred,nrow(a[[1]]))))
-                        occurrence_coords <- rbind (occurrence_coords, data.frame(a[[2]], species_set=rep(species_set, nrow(a[[2]])), species=rep(species, nrow(a[[2]])), model_predictors=rep(m_preds,nrow(a[[2]])), plot_predictor=rep(p_pred,nrow(a[[2]]))))
+                        regression_coords <- rbind (regression_coords, data.frame(a[[1]], species_set=rep(species_set, nrow(a[[1]])), species=rep(species, nrow(a[[1]])), plot_predictor=rep(p_pred,nrow(a[[1]]))))
+                        occurrence_coords <- rbind (occurrence_coords, data.frame(a[[2]], species_set=rep(species_set, nrow(a[[2]])), species=rep(species, nrow(a[[2]])), plot_predictor=rep(p_pred,nrow(a[[2]]))))
                   }
             }
-            ggplot () +
-                  scale_x_continuous(name='') +
-                  scale_y_continuous(limits=c(0,1), name="Probability of occurence") +
-                  geom_line(data=regression_coords, aes(x=x, y=y, group=species, colour=species)) +
-                  geom_point(data=occurrence_coords, aes(x=x, y=y, group=species, colour=species))  +
+            
+            label_font <- element_text(family="sans", color='black', size=16)
+            data_font <- element_text(family="sans", face="bold", color='black', size=12)
+            p <- ggplot () +
+                  scale_x_continuous(name=names(all_predictors[all_predictors==p_pred])) +
+                  scale_y_continuous(limits=c(0,1.1), name="Probability of occurence") +
+                  theme(title = label_font, axis.title = label_font, axis.text = data_font, legend.title = label_font, legend.text = data_font) +
                   coord_cartesian(xlim = ranges$x, ylim = ranges$y, expand = FALSE)
+            if (input$plot_stack == TRUE)
+            {
+                  if (input$plot_observations == FALSE)
+                  {
+                        p <- p + 
+                              geom_area(data=regression_coords, position='stack', aes(x=x, y=y, group=species, fill=species)) +
+                              scale_fill_discrete(name="Species")
+                  }
+                  else
+                  {
+                        p <- p + 
+                              geom_line(data=regression_coords, position='stack', aes(x=x, y=y, group=species, colour=species)) +
+                              scale_colour_discrete(name="Species") 
+                  }
+            }
+            else
+            {
+                  p <- p + 
+                        geom_line(data=regression_coords, aes(x=x, y=y, group=species, colour=species)) +
+                        scale_colour_discrete(name="Species") 
+            }
+            if (input$plot_observations == TRUE)
+            {
+                  p <- p + geom_point(data=occurrence_coords, show.legend=FALSE, aes(x=x, y=y, group=species, colour=species))
+            }
+            return (p)
       })
       
       output$outText <- renderTable({ 
