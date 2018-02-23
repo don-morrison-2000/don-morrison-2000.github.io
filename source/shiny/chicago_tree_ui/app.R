@@ -73,11 +73,17 @@ all_predictors <- c (
 ) 
 all_predictors <- all_predictors[all_predictors %in% colnames(ctree)]
 all_predictors <- all_predictors[order(names(all_predictors))]
-#all_land_use <- unique(land_use$V2)
-
 
 # Model cache
 g_models <- list()
+g_model_full <- NULL
+
+
+# Functions to allow prediction page to generated programatically
+pred_row <- function (pred) {return (list(cb(pred), sl(pred)))}
+hr <- tags$hr(style="height:1px;border:none;color:#333;background-color:#333;")
+cb <- function(pred) {checkboxInput (inputId = paste('predict_on_', pred, sep=''), label = strong(names(all_predictors[all_predictors==pred])), width = '600px', value = FALSE)} 
+sl <- function(pred) {conditionalPanel (condition = paste('input.predict_on_', pred, '==true', sep=''), sliderInput (inputId = paste('predict_', pred, sep=''), label = '', step=(.1*(10^floor(log10(diff(range(ctree[[pred]])))))), min = floor(min(ctree[[pred]])), max = ceiling(max(ctree[[pred]])), value = signif(mean(ctree[[pred]]),3)), hr)}
 
 
 # Models are maintined in a list with this format [[<<predictor formula]][[<species name]][[<land use desc>]]
@@ -118,8 +124,7 @@ build_model <- function (ctree, predictors, species, land_use, street_tree)
 # Define UI
 ui <- fluidPage(theme = shinytheme("lumen"),
                 titlePanel("DuPage County Tree Data"),
-                
-                # Row that shows the probability plot and related statistics
+#                shinythemes::themeSelector(),
                 fluidRow 
                 (
                       column 
@@ -127,106 +132,146 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                             width=12,
                             tabsetPanel
                             (
+                                  selected = 'Model',
                                   tabPanel
                                   (
-                                        title='Plot',
+                                        title='Filter',
                                         column 
                                         ( 
-                                              width=8,
+                                              width=4,
                                               wellPanel
-                                              (  
-                                                    width=8, style = "overflow-y:scroll; min-height: 350px; max-height: 350px",
-                                                    plotOutput(outputId = "probability_plot", width = '600px', height = "300px", dblclick = "plot_dblclick",  brush = brushOpts(id = "plot_brush", resetOnNew = TRUE))
+                                              ( 
+                                                    checkboxInput (inputId = "filter_street_on", label = strong("Street tree"), value = FALSE),
+                                                    conditionalPanel
+                                                    ( 
+                                                          condition = 'input.filter_street_on == true', 
+                                                          checkboxGroupInput (inputId = "filter_street", label = '', choices = levels(ctree$STREETTREE), selected = levels(ctree$STREETTREE))
+                                                    )
+                                              )
+                                        ),
+                                        column 
+                                        ( 
+                                              width=4,
+                                              wellPanel
+                                              ( 
+                                                    checkboxInput (inputId = "filter_land_use_on", label = strong("Land use"), value = FALSE),
+                                                    conditionalPanel
+                                                    ( 
+                                                          condition = 'input.filter_land_use_on == true', 
+                                                          checkboxGroupInput (inputId = "filter_land_use", label = '', choices = levels(ctree$LU), selected = levels(ctree$LU))
+                                                    )
+                                              )
+                                        )
+                                  ),
+                                  tabPanel
+                                  (
+                                        title='Model',
+                                        fluidRow 
+                                        (
+                                              column 
+                                              ( 
+                                                    width=8,
+                                                    wellPanel
+                                                    (  
+                                                          width=8, style = "overflow-y:scroll; min-height: 350px; max-height: 350px",
+                                                          plotOutput(outputId = "probability_plot", width = '600px', height = "300px", dblclick = "plot_dblclick",  brush = brushOpts(id = "plot_brush", resetOnNew = TRUE))
+                                                    )
+                                              ),
+                                              column 
+                                              ( 
+                                                    width=2,
+                                                    wellPanel
+                                                    (  
+                                                          checkboxInput (inputId = "plot_stack", label = strong("Stack"), value=FALSE),
+                                                          checkboxInput (inputId = "plot_observations", label = strong("Observations"), value=FALSE),
+                                                          checkboxInput (inputId = "show_statistics", label = strong("Show statistics"), value=FALSE)
+                                                    )
+                                              )
+                                        ),
+                                        fluidRow 
+                                        (
+                                              column 
+                                              ( 
+                                                    width=12,
+                                                    (
+                                                          conditionalPanel
+                                                          ( 
+                                                                condition = 'input.show_statistics == true', 
+                                                                wellPanel
+                                                                (  
+                                                                      title='Statistics',
+                                                                      width=12, style = "overflow-y:scroll; max-height: 350px",
+                                                                      tableOutput(outputId = "outText")
+                                                                )
+                                                          )
+                                                    )
+                                              )
+                                        ),
+                                        
+                                        fluidRow 
+                                        (
+                                              column 
+                                              ( 
+                                                    width=3,
+                                                    wellPanel
+                                                    (  
+                                                          checkboxGroupInput (inputId = "model_predictors", label = strong("Model Predictors"), choices = all_predictors, selected = all_predictors[1])
+                                                    )
+                                              ),
+                                              column 
+                                              ( 
+                                                    width=3,
+                                                    wellPanel
+                                                    (  
+                                                          radioButtons (inputId = "plot_predictor", label = strong("Plot Predictor"), choices = all_predictors, selected = all_predictors[1])
+                                                    )
+                                              ),
+                                              column 
+                                              ( 
+                                                    width=3,
+                                                    wellPanel
+                                                    ( 
+                                                          checkboxGroupInput (inputId = "species", label = strong("Species"), choices = unique(species), selected = unique(species)[1])
+                                                    )
+                                              )
+                                        )
+                                        
+                                  ),
+                                  tabPanel
+                                  (
+                                        title='Predict',
+                                        column 
+                                        ( 
+                                              width=3,
+                                              wellPanel
+                                              (
+                                                    width=3,
+                                                    lapply (all_predictors, function (i) {pred_row(i)})
                                               )
                                         ),
                                         column 
                                         ( 
                                               width=2,
                                               wellPanel
+                                              (
+                                                    width=2,
+                                                    actionButton ("go", "Go") 
+                                              )
+                                        ),
+                                        column 
+                                        ( 
+                                              width=7,
+                                              wellPanel
                                               (  
-                                                    checkboxInput (inputId = "plot_stack", label = strong("Stack"), value=FALSE),
-                                                    checkboxInput (inputId = "plot_observations", label = strong("Observations"), value=FALSE)
+                                                    width=5, 
+                                                    tableOutput(outputId = "out_prediction")
                                               )
                                         )
-                                  ),
-                                  tabPanel
-                                  (
-                                        title='Statistics',
-                                        wellPanel
-                                        (  
-                                              width=12, style = "overflow-y:scroll; min-height: 350px; max-height: 350px",
-                                              tableOutput(outputId = "outText")
-                                        )
                                   )
-                            )
-                      )
-                ),
-                
-                
-                # Row with the input parameter settings
-                fluidRow 
-                (
-                      column 
-                      ( 
-                            width=3,
-                            wellPanel
-                            ( 
-                                  tags$div(class="header", tags$p(), tags$strong("Data Filters")), 
-                                  tags$hr(style="height:1px;border:none;color:#333;background-color:#333;"),
-                                  checkboxInput (inputId = "filter_street_on", label = strong("Street Tree"), value = FALSE),
-                                  conditionalPanel
-                                  ( 
-                                        condition = 'input.filter_street_on == true', 
-                                        checkboxGroupInput (inputId = "filter_street", label = '', choices = levels(ctree$STREETTREE), selected = levels(ctree$STREETTREE))
-                                  ),
-                                  tags$hr(style="height:1px;border:none;color:#333;background-color:#333;"),
-                                  checkboxInput (inputId = "filter_land_use_on", label = strong("Land Use"), value = FALSE),
-                                  conditionalPanel
-                                  ( 
-                                        condition = 'input.filter_land_use_on == true', 
-                                        checkboxGroupInput (inputId = "filter_land_use", label = '', choices = levels(ctree$LU), selected = levels(ctree$LU))
-                                  )
-                            )
-                      ),
-                      column 
-                      ( 
-                            width=3,
-                            wellPanel
-                            (  
-                                  checkboxGroupInput (inputId = "model_predictors", label = strong("Model Predictors"), choices = all_predictors, selected = all_predictors[1])
-                            )
-                      ),
-                      column 
-                      ( 
-                            width=3,
-                            wellPanel
-                            (  
-                                  radioButtons (inputId = "plot_predictor", label = strong("Plot Predictor"), choices = all_predictors, selected = all_predictors[1])
-                            )
-                      ),
-#                      column 
-#                      ( 
-#                            width=2,
-#                            wellPanel
-#                            (  
-#                                  p(strong("Land Use")),
-#                                  checkboxInput (inputId = "all_land_use", label = strong("All"), value = TRUE),
-#                                  conditionalPanel
-#                                  ( 
-#                                        condition = 'input.all_land_use == false', 
-#                                        checkboxGroupInput (inputId = "land_use", label ='' , choices = unique(land_use$V2), selected = unique(land_use$V2[1]))
-#                                  )
-#                            )
-#                      ),
-                      column 
-                      ( 
-                            width=3,
-                            wellPanel
-                            ( 
-                                  checkboxGroupInput (inputId = "species", label = strong("Species"), choices = unique(species), selected = unique(species)[1])
                             )
                       )
                 )
+                
 )
 
 # Define server function
@@ -244,6 +289,24 @@ server <- function(input, output, session)
                   species_list = NULL,                      # List of species selected to be plotted 
                   x = NULL,                                 # Zoomable x coordinate
                   y = NULL)                                 # Zoomable y coordinate
+      
+      
+      ################################################################################################################
+      # Event reactors
+      ################################################################################################################
+      go_predict <- eventReactive(input$go, {
+            df <- data.frame(predictor = character(), value=numeric(), stringsAsFactors = FALSE)
+            for (p in all_predictors)
+            {
+                  if (input[[paste('predict_on_', p, sep='')]] == TRUE)
+                  {
+                        df <-rbind(df, data.frame(p, input[[paste('predict_',p,sep='')]], stringsAsFactors = FALSE))
+                  }
+            }
+            colnames(df) <- c("Predictor", "Value")
+            return (df)
+      })
+      
 
       
       ################################################################################################################
@@ -425,11 +488,15 @@ server <- function(input, output, session)
                   return (NULL)   
             }
             
-            models <- list()
-            for (species in r_values$species_list)
-            {
-                  models[[species]] <- build_model (filter_data(), r_values$m_preds, species, r_values$filter_land_use, r_values$filter_street)
-            }
+            withProgress (message="Generating model", value=0, {
+                  n <- length(r_values$species_list)
+                  models <- list()
+                  for (species in r_values$species_list)
+                  {
+                        incProgress(1/n, detail = species)
+                        models[[species]] <- build_model (filter_data(), r_values$m_preds, species, r_values$filter_land_use, r_values$filter_street)
+                  }
+            })
             return (models)
       })
       
@@ -535,6 +602,50 @@ server <- function(input, output, session)
             return (stats)
       })
       
+      
+      output$out_prediction <- renderTable({ 
+            predictor_names <- go_predict()$Predictor
+            predictor_values <- go_predict()$Value
+            
+            if (length(predictor_names) > 0)
+            {
+                  model_input <- as.data.frame(t(predictor_values))
+                  colnames(model_input) <- predictor_names
+                  
+                  # Create the models (one per species) for the prediction
+                  df <- data.frame(predictor = character(), prediction = numeric(), aic = numeric(), stringsAsFactors = FALSE)
+                  withProgress (message="Generating model", value=0, {
+                        n <- length(species)
+                        for (species in unique(species))
+                        {
+                              incProgress(1/n, detail = species)
+                              
+                              model_id <- digest::digest(paste(paste(predictor_names, collapse='+'), paste(sort(r_values$filter_land_use),collapse='+'), paste(sort(r_values$filter_street), collapse='+'), species, collapse='+'))
+                              if ( length(g_model_full[[species]]$model_id) > 0 && g_model_full[[species]]$model_id == model_id)
+                              {
+                                    model <- g_model_full[[species]]$model
+                              }
+                              else 
+                              {
+                                    formula <- paste('occur ~ ', paste(predictor_names,collapse='+'))
+                                    data <- filter_data()
+                                    data[,'occur'] <- ifelse (data[,'GENUSSPECI']==species, 1,0)
+                                    model <- glm(formula=as.formula(formula),family=binomial(link='logit'),data=data)
+                                    g_model_full[[species]]$model_id <<- model_id
+                                    g_model_full[[species]]$model <<- model
+                              }
+                              prediction <- predict(model,model_input, type="response")
+                              df <- rbind (df, data.frame(species, prediction, as.integer(model$aic)))
+                        }
+                  })
+                  colnames(df) <- c("Species", "Probability", "AIC")
+                  return (df[order(df$Probability, decreasing = TRUE),])
+            }
+            else
+            {
+                  return (NULL)
+            }
+      })
       
 }
 
