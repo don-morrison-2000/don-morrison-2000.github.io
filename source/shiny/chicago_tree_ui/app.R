@@ -44,14 +44,13 @@ land_use <- landUse
 species <- c(commonSpecies$V1, "Other")
 #species <- c("Fraxinus pennsylvanica", "Acer saccharinum", "Gleditsia triacanthos", "Tilia americana", "Other")
 
-# Coerce all non-common species names to "Other"
-ctree[['GENUSSPECI']] <- ifelse ((match(ctree[['GENUSSPECI']], species, nomatch = 0) > 0), ctree[['GENUSSPECI']], "Other")
 # Convert model categories to factors that match the UI names
 ctree[['STREETTREE']] <- as.factor(ifelse (ctree[['STREETTREE']]=='Y', "Street", ifelse (ctree[['STREETTREE']]=='N', "Non-street", "Unknown")))
 ctree[['LU']] <- as.factor(landUse$V2[as.numeric(as.character(ctree$LU))+1])
 
 
 species_set <- "Common species"
+species_sets <- c("Common species", "Top 10")
 
 
 # Define all possible predictors then subset to just the ones that show up in the input data
@@ -136,6 +135,20 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                   tabPanel
                                   (
                                         title='Filter',
+                                        column 
+                                        ( 
+                                              width=4,
+                                              wellPanel
+                                              ( 
+                                                    checkboxInput (inputId = "filter_species_set_on", label = strong("Species set"), value = FALSE),
+                                                    conditionalPanel
+                                                    ( 
+                                                          condition = 'input.filter_species_set_on == true', 
+                                                          radioButtons (inputId = "filter_species_set", label = '', choices = species_sets, selected = species_sets[1]),
+                                                          checkboxInput (inputId = "filter_species_set_others", label = "Include others", value = TRUE)
+                                                    )
+                                              )
+                                        ),
                                         column 
                                         ( 
                                               width=4,
@@ -251,16 +264,16 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                         ),
                                         column 
                                         ( 
-                                              width=2,
-                                              wellPanel
-                                              (
-                                                    width=2,
-                                                    actionButton ("go", "Go") 
-                                              )
-                                        ),
-                                        column 
-                                        ( 
                                               width=7,
+                                              conditionalPanel
+                                              ( 
+                                                    condition = 'output.show_predict_go == true', 
+                                                    wellPanel
+                                                    (
+                                                          width=2,
+                                                          actionButton ("predict_go", "Build models") 
+                                                    )
+                                              ),
                                               wellPanel
                                               (  
                                                     width=5, 
@@ -288,73 +301,24 @@ server <- function(input, output, session)
                   p_pred = NULL,                            # Single model predictor selected to be plotted
                   species_list = NULL,                      # List of species selected to be plotted 
                   x = NULL,                                 # Zoomable x coordinate
-                  y = NULL)                                 # Zoomable y coordinate
+                  y = NULL,                                 # Zoomable y coordinate
+                  show_predict_go = NULL,                   # Show/hide the Go button on the predict tab
+                  run_predict_go = FALSE,                   # Flip the settng to trigger an update on the predictions
+                  filter_species_set = species_set,
+                  filter_species_set_others = TRUE,
+                  species_names = NULL)
+      
+      
+      
+      
       
       
       ################################################################################################################
-      # Event reactors
-      ################################################################################################################
-      go_predict <- eventReactive(input$go, {
-            df <- data.frame(predictor = character(), value=numeric(), stringsAsFactors = FALSE)
-            for (p in all_predictors)
-            {
-                  if (input[[paste('predict_on_', p, sep='')]] == TRUE)
-                  {
-                        df <-rbind(df, data.frame(p, input[[paste('predict_',p,sep='')]], stringsAsFactors = FALSE))
-                  }
-            }
-            colnames(df) <- c("Predictor", "Value")
-            return (df)
-      })
-      
-
-      
-      ################################################################################################################
-      # Observers
+      # 
+      # Filter tab
+      # 
       ################################################################################################################
       
-      # Observe the model predictors UI
-      observeEvent (input$model_predictors, {
-            m_preds <- character(0)
-            if (!is.null(input$model_predictors))
-            {
-                  # Construct a list of selected model predictors - in order that they were selected
-                  # First list in order the previously existing model predictors (except leave out those that have been deslected)
-                  for (x in r_values$m_preds) {
-                        if ((x %in% input$model_predictors)) 
-                        {
-                              m_preds <- c(m_preds, all_predictors[all_predictors==x])
-                        }
-                  }
-                  # Now add in the newly selected predictors. Since this is inside an observeEvent, we would expect only 
-                  # one new predictor. If there are more than one, then there is no way to determine the order - oh well....
-                  for (x in input$model_predictors) {
-                        if (!(x %in% r_values$m_preds)) 
-                        {
-                              m_preds <- c(m_preds, all_predictors[all_predictors==x])
-                        }
-                  }
-            }
-            # Set the plot predictor choice to refect the ordered list of model predictors and update the UI
-            p_choices <- m_preds
-            p_selected <- if (input$plot_predictor %in% p_choices) input$plot_predictor else p_choices[1]
-            updateRadioButtons(session, "plot_predictor", choices=as.list(m_preds), selected=p_selected)
-            # Update the reactive value to propagate the new model predictors
-            r_values$m_preds <- m_preds
-      })
-      
-      # Observe the plot predictors UI
-      observeEvent (input$plot_predictors, {
-            # Update the reactive value to match the UI
-            r_values$p_preds <- input$plot_predictor
-      })
-      
-      
-      # Observe the species selection UI
-      observeEvent (input$species, {
-            # Update the reactive value to match the UI
-            r_values$species_list <- input$species
-      }, ignoreNULL=FALSE)
       
       # Observe the street tree filter checkbox UI
       observeEvent (input$filter_street_on, {
@@ -415,10 +379,130 @@ server <- function(input, output, session)
       }, ignoreNULL=FALSE)
       
       
+      # Observe the land use filter checkbox UI
+      observeEvent (input$filter_land_use_on, {
+            # Update the reactive value to match the UI
+            if (input$filter_land_use_on == TRUE)
+            {
+                  # The filter is turned on - restore the filter values
+                  r_values$filter_land_use <- input$filter_land_use
+            }
+            else
+            {
+                  # The filter is turned off - include all LUs
+                  r_values$filter_land_use <- levels(ctree[['LU']])
+            }
+      })
+      
+      
+      # Observe the species set filter selection UI
+      observeEvent (input$filter_species_set_on, {
+            # Update the reactive value to match the UI
+            if (input$filter_species_set_on == TRUE)
+            {
+                  # The filter is turned on - restore the filter values
+                  r_values$filter_species_set <- input$filter_species_set
+                  r_values$filter_species_set_others <- input$filter_species_set_others
+            }
+            else
+            {
+                  # The filter is turned off - include all LUs
+                  r_values$filter_species_set <- species_sets[1]
+                  r_values$filter_species_set_others <- TRUE
+            }
+      })
+      observeEvent (input$filter_species_set, {
+            # Save the name of the species set
+            r_values$filter_species_set <- input$filter_species_set
+      })
+      observeEvent (input$filter_species_set_others, {
+            # Save the setting for keeping "others"
+            a <- input$filter_species_set_others
+            b <- r_values$filter_species_set_others
+            r_values$filter_species_set_others <- input$filter_species_set_others
+      })
+      
+      
+      # Subset the data 
+      filter_data <- reactive({
+            data <- ctree
+            if (r_values$filter_species_set == 'Top 10')
+            {
+                  species_names <- names(head(sort(table(factor(data[['GENUSSPECI']])), decreasing = TRUE), 10))
+            }
+            else 
+            {
+                  # Default to common species
+                  species_names <- commonSpecies$V1
+            }
+            if (r_values$filter_species_set_others == TRUE)
+            {
+                 # Coerce all non-common species names to "Other"
+                 data[['GENUSSPECI']] <- ifelse ((match(data[['GENUSSPECI']], species_names, nomatch = 0) > 0), data[['GENUSSPECI']], "Other")
+                 species_names <- c(species_names, "Other")
+            }
+            updateCheckboxGroupInput (session, "species", choices = species_names, selected = species_names[1])
+            r_values$species_names <- species_names
+            return (subset(data, LU %in% r_values$filter_land_use & STREETTREE %in% r_values$filter_street & GENUSSPECI %in% r_values$species_names))
+      })
       
       
       
-            
+      
+      
+      
+      
+      ################################################################################################################
+      # 
+      # Model tab
+      # 
+      ################################################################################################################
+      
+      
+      # Observe the model predictors UI
+      observeEvent (input$model_predictors, {
+            m_preds <- character(0)
+            if (!is.null(input$model_predictors))
+            {
+                  # Construct a list of selected model predictors - in order that they were selected
+                  # First list in order the previously existing model predictors (except leave out those that have been deslected)
+                  for (x in r_values$m_preds) {
+                        if ((x %in% input$model_predictors)) 
+                        {
+                              m_preds <- c(m_preds, all_predictors[all_predictors==x])
+                        }
+                  }
+                  # Now add in the newly selected predictors. Since this is inside an observeEvent, we would expect only 
+                  # one new predictor. If there are more than one, then there is no way to determine the order - oh well....
+                  for (x in input$model_predictors) {
+                        if (!(x %in% r_values$m_preds)) 
+                        {
+                              m_preds <- c(m_preds, all_predictors[all_predictors==x])
+                        }
+                  }
+            }
+            # Set the plot predictor choice to refect the ordered list of model predictors and update the UI
+            p_choices <- m_preds
+            p_selected <- if (input$plot_predictor %in% p_choices) input$plot_predictor else p_choices[1]
+            updateRadioButtons(session, "plot_predictor", choices=as.list(m_preds), selected=p_selected)
+            # Update the reactive value to propagate the new model predictors
+            r_values$m_preds <- m_preds
+      })
+      
+      # Observe the plot predictors UI
+      observeEvent (input$plot_predictors, {
+            # Update the reactive value to match the UI
+            r_values$p_preds <- input$plot_predictor
+      })
+      
+      
+      # Observe the species selection UI
+      observeEvent (input$species, {
+            # Update the reactive value to match the UI
+            r_values$species_list <- input$species
+      }, ignoreNULL=FALSE)
+
+      
       # Observe the model predictor UI
       observeEvent (input$model_predictors, {
             m_preds <- character(0)
@@ -454,6 +538,11 @@ server <- function(input, output, session)
       })
 
       
+      # Observe the filter tab's species list
+      # observeEvent (r_values$species_names, {
+      #       a <- r_values$species_names
+      #       updateCheckboxGroupInput (session, "species", choices = r_values$species_names, selected = r_values$species_names[1])
+      # })
       
       # Observe double clicks on the plot.
       # check if there's a brush on the plot. If so, zoom to the brush bounds; if not, reset the zoom.
@@ -469,17 +558,7 @@ server <- function(input, output, session)
             }
       })
       
-      
-      
-      ################################################################################################################
-      # Reactive functions
-      ################################################################################################################
 
-      # Subset the data 
-      filter_data <- reactive({ 
-            return (subset(ctree, LU %in% r_values$filter_land_use & STREETTREE %in% r_values$filter_street))
-      })
-      
       # Build the models for the coordinates that need to be plotted
       get_models <- reactive({ 
             # Make sure all paramters are set
@@ -500,13 +579,7 @@ server <- function(input, output, session)
             return (models)
       })
       
-      
-      ################################################################################################################
-      # Inputs
-      ################################################################################################################
-      
-      
-      
+
       # Plot the probabilities
       output$probability_plot <- renderPlot({ 
             
@@ -602,10 +675,77 @@ server <- function(input, output, session)
             return (stats)
       })
       
+  
+      
+      
+      
+      
+      ################################################################################################################
+      # 
+      # Predict tab
+      # 
+      ################################################################################################################
+      
+      
+      # Show the Go button when a predictor checkbox changes state
+      lapply (X=all_predictors, FUN=function (i)
+      {
+            observeEvent (input[[paste('predict_on_', i, sep='')]], {
+                  r_values$show_predict_go <- TRUE
+            }, ignoreInit = TRUE)      
+      })
+      # Hide the Go button after it is clicked
+      observeEvent (input$predict_go, {
+            r_values$show_predict_go <- FALSE
+      })
+      
+      
+      # Observe the GO button
+      observeEvent (input$predict_go, {
+            # Trigger the prediction update
+            r_values$run_predict_go <- !r_values$run_predict_go
+      })
+      
+      # Observe updates to the prediction sliders. If the Go button is displayed, eat it. Otherwise send the updates 
+      # to the output function that will update the prediction table
+      lapply (X=all_predictors, FUN=function (i)
+      {
+            observeEvent (input[[paste('predict_', i, sep='')]], {
+                  if (r_values$show_predict_go == FALSE)
+                  {
+                        # Trigger the prediction update
+                        r_values$run_predict_go <- !r_values$run_predict_go
+                  }
+            }, ignoreInit = TRUE)      
+      })
+      
+      # This is triggered when the "run_predict_go" switch is flipped
+      predict_go <- eventReactive(r_values$run_predict_go, {
+            df <- data.frame(predictor = character(), value=numeric(), stringsAsFactors = FALSE)
+            for (p in all_predictors)
+            {
+                  if (input[[paste('predict_on_', p, sep='')]] == TRUE)
+                  {
+                        df <-rbind(df, data.frame(p, input[[paste('predict_',p,sep='')]], stringsAsFactors = FALSE))
+                  }
+            }
+            colnames(df) <- c("Predictor", "Value")
+            return (df)
+      })
+      
+      
+      # Send the hide/show go button value to the UI 
+      output$show_predict_go <- reactive({ 
+            return (r_values$show_predict_go)
+      })
+      # This seems to be required to force the update of output$show_predict_go to be send to the UI and control the conditional panel 
+      outputOptions(output, 'show_predict_go', suspendWhenHidden=FALSE)      
+      
       
       output$out_prediction <- renderTable({ 
-            predictor_names <- go_predict()$Predictor
-            predictor_values <- go_predict()$Value
+            predictor_names <- predict_go()$Predictor
+            predictor_values <- predict_go()$Value
+            data <- filter_data()
             
             if (length(predictor_names) > 0)
             {
@@ -615,12 +755,12 @@ server <- function(input, output, session)
                   # Create the models (one per species) for the prediction
                   df <- data.frame(predictor = character(), prediction = numeric(), aic = numeric(), stringsAsFactors = FALSE)
                   withProgress (message="Generating model", value=0, {
-                        n <- length(species)
-                        for (species in unique(species))
+                        n <- length(r_values$species_names)
+                        for (species in unique(r_values$species_names)) 
                         {
                               incProgress(1/n, detail = species)
                               
-                              model_id <- digest::digest(paste(paste(predictor_names, collapse='+'), paste(sort(r_values$filter_land_use),collapse='+'), paste(sort(r_values$filter_street), collapse='+'), species, collapse='+'))
+                              model_id <- digest::digest(paste(paste(predictor_names, collapse='+'), r_values$filter_species_set, as.character(r_values$filter_species_set_others), paste(sort(r_values$filter_land_use),collapse='+'), paste(sort(r_values$filter_street), collapse='+'), species, collapse='+'))
                               if ( length(g_model_full[[species]]$model_id) > 0 && g_model_full[[species]]$model_id == model_id)
                               {
                                     model <- g_model_full[[species]]$model
@@ -628,7 +768,6 @@ server <- function(input, output, session)
                               else 
                               {
                                     formula <- paste('occur ~ ', paste(predictor_names,collapse='+'))
-                                    data <- filter_data()
                                     data[,'occur'] <- ifelse (data[,'GENUSSPECI']==species, 1,0)
                                     model <- glm(formula=as.formula(formula),family=binomial(link='logit'),data=data)
                                     g_model_full[[species]]$model_id <<- model_id
