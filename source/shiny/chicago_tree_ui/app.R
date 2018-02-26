@@ -417,8 +417,6 @@ server <- function(input, output, session)
       })
       observeEvent (input$filter_species_set_others, {
             # Save the setting for keeping "others"
-            a <- input$filter_species_set_others
-            b <- r_values$filter_species_set_others
             r_values$filter_species_set_others <- input$filter_species_set_others
       })
       
@@ -539,7 +537,9 @@ server <- function(input, output, session)
       
       # Observe the filter tab's species list
       observeEvent (r_values$species_names, {
-            updateCheckboxGroupInput (session, "species", choices = r_values$species_names, selected = r_values$species_names[1])
+            a <- input$species[input$species %in% r_values$species_names]
+            b <- a
+            updateCheckboxGroupInput (session, "species", choices = r_values$species_names, selected = input$species[input$species %in% r_values$species_names])
       })
       
       # Observe double clicks on the plot.
