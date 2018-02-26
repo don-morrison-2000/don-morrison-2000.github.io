@@ -428,7 +428,7 @@ server <- function(input, output, session)
             data <- ctree
             if (r_values$filter_species_set == 'Top 10')
             {
-                  species_names <- names(head(sort(table(factor(data[['GENUSSPECI']])), decreasing = TRUE), 10))
+                  species_names <- sort(names(head(sort(table(factor(data[['GENUSSPECI']])), decreasing = TRUE), 10)))
             }
             else 
             {
@@ -441,7 +441,6 @@ server <- function(input, output, session)
                  data[['GENUSSPECI']] <- ifelse ((match(data[['GENUSSPECI']], species_names, nomatch = 0) > 0), data[['GENUSSPECI']], "Other")
                  species_names <- c(species_names, "Other")
             }
-            updateCheckboxGroupInput (session, "species", choices = species_names, selected = species_names[1])
             r_values$species_names <- species_names
             return (subset(data, LU %in% r_values$filter_land_use & STREETTREE %in% r_values$filter_street & GENUSSPECI %in% r_values$species_names))
       })
@@ -539,10 +538,9 @@ server <- function(input, output, session)
 
       
       # Observe the filter tab's species list
-      # observeEvent (r_values$species_names, {
-      #       a <- r_values$species_names
-      #       updateCheckboxGroupInput (session, "species", choices = r_values$species_names, selected = r_values$species_names[1])
-      # })
+      observeEvent (r_values$species_names, {
+            updateCheckboxGroupInput (session, "species", choices = r_values$species_names, selected = r_values$species_names[1])
+      })
       
       # Observe double clicks on the plot.
       # check if there's a brush on the plot. If so, zoom to the brush bounds; if not, reset the zoom.
@@ -778,7 +776,8 @@ server <- function(input, output, session)
                         }
                   })
                   colnames(df) <- c("Species", "Probability", "AIC")
-                  return (df[order(df$Probability, decreasing = TRUE),])
+                  df <- df[order(df$Probability, decreasing = TRUE),]
+                  return (rbind(df, data.frame(Species='Total', Probability=sum(df$Probability), AIC='')))
             }
             else
             {
