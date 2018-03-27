@@ -15,13 +15,14 @@ library(shiny)
 library(shinythemes)
 library(ggplot2)
 
-chicago_tree_app_local_file <- 'D:/CRTI/r_projects/chicago_tree_dam/chicagotree_dam.r'
+# This file has the graphing functions
+chicago_tree_app_local_file <- 'D:/CRTI/r_projects/shinyapp/chicagotree_dam.r'
 chicago_tree_app_url <- 'https://don-morrison-2000.github.io/source/chicagotree_dam.r'
 
-ctree_local_file <- 'D:/CRTI/data/cleaned/dupage_county_accepted_V1.csv'
-ctree_http_url <- 'https://don-morrison-2000.github.io/data/dupage_county_accepted_V1.csv'
+ctree_local_file <- 'D:/CRTI/data/cleaned/dupage_county_accepted_V3.csv'
+ctree_http_url <- 'https://don-morrison-2000.github.io/data/dupage_county_accepted_V3.csv'
 
-# Source Richeard's modeling proram (either from local disk or the http server)
+# Source Richard's modeling proram (either from local disk or the http server)
 if (file.exists(chicago_tree_app_local_file))
 {
       source(chicago_tree_app_local_file)
@@ -33,25 +34,21 @@ if (file.exists(chicago_tree_app_local_file))
 # Read in the tree data (either from local disk or the http server)
 if (file.exists(ctree_local_file))
 {
-      ctree <- readChicagoTree(path='', infile=ctree_local_file)
+      ctree <- read.delim(ctree_local_file, as.is=TRUE, sep=',') 
 } else
 {
-      ctree <- readChicagoTree(path='', infile=ctree_http_url)
+      ctree <- read.delim(ctree_http_url, as.is=TRUE, sep=',')
 }
 
-# These come from Richard's modeling program
-land_use <- landUse
-species <- c(commonSpecies$V1, "Other")
-#species <- c("Fraxinus pennsylvanica", "Acer saccharinum", "Gleditsia triacanthos", "Tilia americana", "Other")
+land_use <- read.delim('https://don-morrison-2000.github.io/data/land_use.csv', as.is=TRUE, header=FALSE)
+species <- c(unique(read.delim('https://don-morrison-2000.github.io/data/common_species.csv', as.is=TRUE, header=FALSE)$V1),"Other")
 
 # Convert model categories to factors that match the UI names
 ctree[['STREETTREE']] <- as.factor(ifelse (ctree[['STREETTREE']]=='Y', "Street", ifelse (ctree[['STREETTREE']]=='N', "Non-street", "Unknown")))
 ctree[['LU']] <- as.factor(landUse$V2[as.numeric(as.character(ctree$LU))+1])
 
-
 species_set <- "Common species"
 species_sets <- c("Common species", "Top 10")
-
 
 # Define all possible predictors then subset to just the ones that show up in the input data
 all_predictors <- c (
