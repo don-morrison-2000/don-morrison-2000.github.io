@@ -137,9 +137,6 @@ ui <- fluidPage(
          ),
          column (
                width=2,
-               # wellPanel (
-               #       actionButton ("ui_update_chart_go", "Update Chart") 
-               # ),
                wellPanel (
                      sliderInput (inputId = "ui_bins", label = strong("Bins"),  min=2, max=10, value=4)
                ),
@@ -150,7 +147,7 @@ ui <- fluidPage(
          column (
                width=6,
                wellPanel (
-                     style = "overflow-y:scroll; min-height: 300px; max-height: 800px",
+                     style = "overflow-y:scroll; min-height: 300px; max-height: 1000px",
                      uiOutput(outputId = "ui_chart", width = '600px', height = "300px", dblclick = "plot_dblclick",  brush = brushOpts(id = "plot_brush", resetOnNew = TRUE))
                )
          )
@@ -245,7 +242,8 @@ server <- function(input, output, session) {
       
       # Update the widget height to match the number of facets, then call the function that performs the plot
       output$ui_chart <- renderUI({
-            plotOutput("contents", height = length(input$ui_species)*100, width = "100%")
+            height <- ifelse (length(input$ui_species)==0, 0, 200+(length(input$ui_species)-1)*100)
+            plotOutput("contents", height = height, width = "100%")
       })
 }
 
