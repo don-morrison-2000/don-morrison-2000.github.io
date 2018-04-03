@@ -234,7 +234,7 @@ server <- function(input, output, session) {
             g <- ggplot(fits,aes(LandUse,value, fill=as.factor(Category))) + 
                   geom_bar(position="dodge", stat="identity") + 
                   facet_wrap(~Species, ncol=1) + 
-                  xlab(names(var_descs)[which(var_descs==input$ui_var)]) + 
+                  xlab('Land Use') + 
                   ylab('Relative frequency') + 
                   scale_fill_discrete(name=names(var_descs)[which(var_descs==input$ui_var)]) +
                   geom_vline(xintercept = seq(1.5,length(unique(fits$LandUse))-0.5,1)) +
