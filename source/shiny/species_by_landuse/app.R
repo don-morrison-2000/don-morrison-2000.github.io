@@ -231,13 +231,23 @@ server <- function(input, output, session) {
             fits <- melt(fits, c(id="Species","LandUse"), variable.name="Category")
             
             # Plot the results
-            g <- ggplot(fits,aes(Category,value, fill=as.factor(LandUse))) + 
+            g <- ggplot(fits,aes(LandUse,value, fill=as.factor(Category))) + 
                   geom_bar(position="dodge", stat="identity") + 
                   facet_wrap(~Species, ncol=1) + 
                   xlab(names(var_descs)[which(var_descs==input$ui_var)]) + 
                   ylab('Relative frequency') + 
-                  scale_fill_discrete(name="Land use") +
-                  geom_vline(xintercept = seq(1.5,length(unique(fits$Category))-0.5,1))  
+                  scale_fill_discrete(name=names(var_descs)[which(var_descs==input$ui_var)]) +
+                  geom_vline(xintercept = seq(1.5,length(unique(fits$LandUse))-0.5,1)) +
+                  theme(axis.text.x=element_text(angle = -30, hjust = 0)) 
+            
+            
+            # g <- ggplot(fits,aes(Category,value, fill=as.factor(LandUse))) + 
+            #       geom_bar(position="dodge", stat="identity") + 
+            #       facet_wrap(~Species, ncol=1) + 
+            #       xlab(names(var_descs)[which(var_descs==input$ui_var)]) + 
+            #       ylab('Relative frequency') + 
+            #       scale_fill_discrete(name="Land use") +
+            #       geom_vline(xintercept = seq(1.5,length(unique(fits$Category))-0.5,1)) 
             return (g)
       })
       
