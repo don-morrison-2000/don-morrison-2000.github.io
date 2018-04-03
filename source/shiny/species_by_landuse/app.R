@@ -15,6 +15,7 @@ library(shiny)
 library(ggplot2)
 library(reshape2)
 library(stringr)
+library(Hmisc)
 
 ctree_local_file <- 'D:/CRTI/data/cleaned/dupage_county_accepted_V4.csv'
 ctree_http_url <- 'https://don-morrison-2000.github.io/data/dupage_county_accepted_V4.csv'
@@ -99,23 +100,54 @@ get_species <- function(ctree, lu_cats, abundance_level)
       
 }
 
-# Create a categorical variable for height. The break points b can be varied. I replaced blanks with underscores
 assign_categories <- function(full=ctree, var='HEIGHT_MEAN', num_bins=5)
 {
       # Calculate the break points - evenly spread acress the range
       val_range <- range(full[[var]], na.rm=TRUE)
       min <- as.integer(floor(val_range[1]))
       max <- as.integer(ceiling(val_range[2]))
-      by = ifelse((max-min)/num_bins < 2, (max-min)/(num_bins-1), as.integer((max-min)/(num_bins-1)))
-      breaks <- seq(from=min, to=max, by=by)
-      # Bin the specified variable
-      full$cat=cut(full[[var]],breaks=breaks)
-      # Pretty up the level names
-      levels(full$cat) <- c(substring(levels(full$cat),2,nchar(levels(full$cat))-1),"missing")
-      levels(full$cat) <- str_replace(levels(full$cat), ",", "-")
-      full$cat[is.na(full$cat)]='missing'
+
+      if (num_bins == 1)
+      {
+            full$cat[!is.na(full[[var]])] <- paste(min, '-' , max,sep='')
+            full$cat[is.na(full[[var]])] <- "Missing"
+      }
+      else
+      {
+            by = ifelse((max-min)/num_bins < 2, (max-min)/(num_bins), as.integer((max-min)/(num_bins)))
+            breaks <- seq(from=min, to=max, by=by)
+            # Bin the specified variable
+            full$cat=cut(full[[var]],breaks=breaks)
+            # Pretty up the level names
+            levels(full$cat) <- substring(levels(full$cat),2,nchar(levels(full$cat))-1)
+            levels(full$cat) <- str_replace(levels(full$cat), ",", "-")
+      }
       return(full)
 }
+
+assign_quantiles <- function(full=ctree, var='HEIGHT_MEAN', num_bins=5)
+{
+      # Calculate the break points - evenly spread acress the range
+      val_range <- range(full[[var]], na.rm=TRUE)
+      min <- as.integer(floor(val_range[1]))
+      max <- as.integer(ceiling(val_range[2]))
+      
+      if (num_bins == 1)
+      {
+            full$cat[!is.na(full[[var]])] <- paste(min, '-' , max,sep='')
+            full$cat[is.na(full[[var]])] <- "Missing"
+      }
+      else
+      {
+            # Bin the specified variable
+            full$cat <- cut2(full[[var]], g=num_bins)
+            # Pretty up the level names
+            levels(full$cat) <- substring(levels(full$cat),2,nchar(levels(full$cat))-1)
+            levels(full$cat) <- str_replace(levels(full$cat), ",", "-")
+      }
+      return(full)
+}
+
 
 
 # Define UI for application that draws a histogram
@@ -128,22 +160,24 @@ ui <- fluidPage(
                width=2,
                wellPanel (
                      sliderInput (inputId = "ui_abundance_level", label = strong("Abundance level"),  min=1, max=10, value=4),
-                     checkboxGroupInput (inputId = "ui_land_use", label = strong("Land use"),  choices = main_lu_cats, selected = main_lu_cats)
+                     checkboxGroupInput (inputId = "ui_land_use", label = strong("Land use"),  choices = main_lu_cats, selected = main_lu_cats),
+                     actionButton("ui_clear_land_use", label = strong("Clear"))
                )
          ),
          column (
                width=2,
                wellPanel (
-                     checkboxGroupInput (inputId = "ui_species", label = strong("Species"),  choices = character(0), selected = character(0))
+                     checkboxGroupInput (inputId = "ui_species", label = strong("Species"),  choices = character(0), selected = character(0)),
+                     actionButton("ui_clear_species", label = strong("Clear"))
                )
          ),
          column (
                width=2,
-               wellPanel (
-                     sliderInput (inputId = "ui_bins", label = strong("Bins"),  min=2, max=10, value=4)
-               ),
                wellPanel (
                      selectInput (inputId = "ui_var", label = strong("Measurement"),  choices=var_descs, selected=names(var_descs)[1])
+               ),
+               wellPanel (
+                     sliderInput (inputId = "ui_bins", label = strong("Quantiles"),  min=1, max=10, value=4)
                )
          ),
          column (
@@ -183,13 +217,25 @@ server <- function(input, output, session) {
             update_species_list()
       },ignoreNULL=FALSE)
 
+      # Observe the button to clear the selected land use
+      observeEvent(input$ui_clear_land_use, {
+            updateCheckboxGroupInput(session, "ui_land_use", choices = main_lu_cats, selected = NULL)
+      })
+
       # Observe the species checkbox list
       observeEvent(input$ui_species, {
             selected <- input$ui_species
             not_selected <- setdiff(r_values$display_species_list, selected)
             r_values$selected_species_list <- setdiff(unique(c(r_values$selected_species_list, selected)), not_selected)
       },ignoreNULL=FALSE)
-
+      
+      # Observe the button to clear the selected species
+      observeEvent(input$ui_clear_species, {
+            r_values$selected_species_list <- NULL
+            update_species_list()
+      })
+      
+      
       update_species_list <- reactive({
             r_values$display_species_list <- get_species(ctree, r_values$land_use_list, r_values$abundance_level)
             updateCheckboxGroupInput(session, "ui_species", choices = r_values$display_species_list, selected = r_values$selected_species_list)
@@ -207,7 +253,7 @@ server <- function(input, output, session) {
                   return (NULL)
             }
             # Categorize the species by the requested variable
-            ctree <- assign_categories (ctree, input$ui_var, input$ui_bins)
+            ctree <- assign_quantiles (ctree, input$ui_var, input$ui_bins)
             
             # Create a data fram to collect the data
             df_cols <- c("Species", "LandUse", levels(ctree$cat))
@@ -237,17 +283,12 @@ server <- function(input, output, session) {
                   xlab('Land Use') + 
                   ylab('Relative frequency') + 
                   scale_fill_discrete(name=names(var_descs)[which(var_descs==input$ui_var)]) +
-                  geom_vline(xintercept = seq(1.5,length(unique(fits$LandUse))-0.5,1)) +
                   theme(axis.text.x=element_text(angle = -30, hjust = 0)) 
-            
-            
-            # g <- ggplot(fits,aes(Category,value, fill=as.factor(LandUse))) + 
-            #       geom_bar(position="dodge", stat="identity") + 
-            #       facet_wrap(~Species, ncol=1) + 
-            #       xlab(names(var_descs)[which(var_descs==input$ui_var)]) + 
-            #       ylab('Relative frequency') + 
-            #       scale_fill_discrete(name="Land use") +
-            #       geom_vline(xintercept = seq(1.5,length(unique(fits$Category))-0.5,1)) 
+            # Add vertical separator lines if more than one land use category
+            if (length(levels(fits$LandUse)) > 1)
+            {
+                  g <- g + geom_vline(xintercept = seq(1.5,length(unique(fits$LandUse))-0.5,1)) 
+            }            
             return (g)
       })
       
