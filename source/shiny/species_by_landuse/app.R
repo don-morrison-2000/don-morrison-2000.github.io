@@ -58,8 +58,7 @@ var_descs <- var_descs[var_descs %in% colnames(ctree)]
 var_descs <- var_descs[order(names(var_descs))]
 
 
-
-top_spps <- function (ctree, lu_cats, limit)
+get_top_spps <- function (ctree, lu_cats, limit)
 {
       top_spps_names = NULL
       top_spps_lu = list()
@@ -86,43 +85,19 @@ top_spps <- function (ctree, lu_cats, limit)
       }
       return (top_spps)
 }
+top_spps <- get_top_spps (ctree, main_lu_cats, 10)
+
 
 
 get_species <- function(ctree, lu_cats, abundance_level)
 {
       spps <- vector('character')
-      top_spps <- top_spps(ctree, lu_cats, abundance_level)
       for (lu_cat in lu_cats)
       {
             spps <- unique(c(spps, na.omit(rownames(top_spps[top_spps[,lu_cat]<=abundance_level,,drop=FALSE]))))
       }
       return (sort(spps))
       
-}
-
-assign_categories <- function(full=ctree, var='HEIGHT_MEAN', num_bins=5)
-{
-      # Calculate the break points - evenly spread acress the range
-      val_range <- range(full[[var]], na.rm=TRUE)
-      min <- as.integer(floor(val_range[1]))
-      max <- as.integer(ceiling(val_range[2]))
-
-      if (num_bins == 1)
-      {
-            full$cat[!is.na(full[[var]])] <- paste(min, '-' , max,sep='')
-            full$cat[is.na(full[[var]])] <- "Missing"
-      }
-      else
-      {
-            by = ifelse((max-min)/num_bins < 2, (max-min)/(num_bins), as.integer((max-min)/(num_bins)))
-            breaks <- seq(from=min, to=max, by=by)
-            # Bin the specified variable
-            full$cat=cut(full[[var]],breaks=breaks)
-            # Pretty up the level names
-            levels(full$cat) <- substring(levels(full$cat),2,nchar(levels(full$cat))-1)
-            levels(full$cat) <- str_replace(levels(full$cat), ",", "-")
-      }
-      return(full)
 }
 
 assign_quantiles <- function(full=ctree, var='HEIGHT_MEAN', num_bins=5)
@@ -142,8 +117,13 @@ assign_quantiles <- function(full=ctree, var='HEIGHT_MEAN', num_bins=5)
             # Bin the specified variable
             full$cat <- cut2(full[[var]], g=num_bins)
             # Pretty up the level names
-            levels(full$cat) <- substring(levels(full$cat),2,nchar(levels(full$cat))-1)
-            levels(full$cat) <- str_replace(levels(full$cat), ",", "-")
+            breaks <- as.character(signif(round(cut2(full[[var]], g=num_bins, onlycuts=TRUE),digits=3),digits=3))
+            labels <- vector("character")
+            for (i in seq(1,length(breaks)-1))
+            {
+                  labels <- c(labels, paste(breaks[i],"-",breaks[i+1]))
+            }
+            levels(full$cat) <- labels
       }
       return(full)
 }
@@ -201,9 +181,6 @@ server <- function(input, output, session) {
             display_species_list = vector("character"),
             selected_species_list = vector("character"),
             land_use_list = vector("character"))
-            # ,
-            # variable = NULL,
-            # num_bins =0)
       
       # Observe the abundance level slider
       observeEvent(input$ui_abundance_level, {
@@ -255,7 +232,7 @@ server <- function(input, output, session) {
             # Categorize the species by the requested variable
             ctree <- assign_quantiles (ctree, input$ui_var, input$ui_bins)
             
-            # Create a data fram to collect the data
+            # Create a data frame to collect the data
             df_cols <- c("Species", "LandUse", levels(ctree$cat))
             fits <- setNames(data.frame(matrix(ncol=length(df_cols), nrow = 0)), df_cols)
             for(sp in input$ui_species)
