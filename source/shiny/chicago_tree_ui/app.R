@@ -10,6 +10,11 @@
 # source('D:/CRTI/r_projects/shinyapp/chicago_tree_ui/app.R')
 # runApp('chicago_tree_ui')
 
+#
+# To run from the web
+# library(shiny)
+# shiny::runGitHub('don-morrison-2000.github.io','don-morrison-2000', subdir='source/shiny/chicago_tree_ui/')
+
 # Load packages
 library(shiny)
 library(shinythemes)
@@ -41,7 +46,7 @@ if (file.exists(ctree_local_file))
 }
 
 land_use <- read.delim('https://don-morrison-2000.github.io/data/land_use.csv', as.is=TRUE, header=FALSE)
-common_species <- c(unique(read.delim('https://don-morrison-2000.github.io/data/common_species.csv', as.is=TRUE, header=FALSE)$V1),"Other")
+common_species <- unique(read.delim('https://don-morrison-2000.github.io/data/common_species.csv', as.is=TRUE, header=FALSE)$V1)
 
 # Convert model categories to factors that match the UI names
 ctree[['LU']] <- as.factor(land_use$V2[as.numeric(as.character(ctree$LU))])
