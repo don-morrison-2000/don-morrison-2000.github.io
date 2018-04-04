@@ -1,4 +1,11 @@
 # This is extracted from Richard's chicago_tree.r program
+
+prepareOneSpecies=function(full=ctree,s='Acer negundo',spcol='GENUSSPECI')
+{
+      full[,'occur']=0
+      full[full[,spcol]==s,'occur']=1
+      return(full)
+}
  
 graphOneResult=function(full=ctree,mod,sp='Acer saccharinum',predictor='BLDG_AGE',predictor2=NULL,which2='mean',yrange=NULL,add=FALSE,div=100,Ncat=20, retSpecs=FALSE)
 {
@@ -36,17 +43,17 @@ oneFittedResult=function(full=ctree,sp='Acer saccharinum',pred1='BLDG_AGE',pred2
 {
  
  x=full[,pred1]
- graphx=seq(min(x),max(x),len=div)	
+ graphx=seq(min(x,na.rm=TRUE),max(x,na.rm=TRUE),len=div)	
  fullx=data.frame(graphx)
  
  colnames(fullx)=pred1
  #DAM - this fails with a factor predictor. eg LU1 is being passed in a predictor but is not a column in "full"
  
- for(onepred in allpredictors) if(onepred!=pred1) fullx[,onepred]=mean(full[,onepred])
+ for(onepred in allpredictors) if(onepred!=pred1) fullx[,onepred]=mean(full[,onepred],na.rm=TRUE)
  if (!is.null(pred2))
  {
-    if(whichpred2=='upper') fullx[,pred2]=mean(full[,pred2])+2*sd(full[,pred2])
-    else if(whichpred2=='lower') fullx[,pred2]=mean(full[,pred2])-2*sd(full[,pred2])
+    if(whichpred2=='upper') fullx[,pred2]=mean(full[,pred2],na.rm=TRUE)+2*sd(full[,pred2],na.rm=TRUE)
+    else if(whichpred2=='lower') fullx[,pred2]=mean(full[,pred2],na.rm=TRUE)-2*sd(full[,pred2],na.rm=TRUE)
  }
 	
  return(fullx)
@@ -59,7 +66,7 @@ graphOneResultBins=function(full=ctree,mod,sp='Acer saccharinum',predictor='BLDG
  spdata=prepareOneSpecies(full=full,s=sp)
  x=spdata[,predictor]
  
- bins=unique(quantile(x,prob=seq(0,1,len=div)))
+ bins=unique(quantile(x,prob=seq(0,1,len=div),na.rm=TRUE))
  Nbin=length(bins)
  bins[Nbin]=1+bins[Nbin]                  ## Necessary so the highest x falls in the last bin
  # browser()
