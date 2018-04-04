@@ -19,8 +19,8 @@ library(ggplot2)
 chicago_tree_app_local_file <- 'D:/CRTI/r_projects/shinyapp/chicagotree_dam.r'
 chicago_tree_app_url <- 'https://don-morrison-2000.github.io/source/chicagotree_dam.r'
 
-ctree_local_file <- 'D:/CRTI/data/cleaned/dupage_county_accepted_V3.csv'
-ctree_http_url <- 'https://don-morrison-2000.github.io/data/dupage_county_accepted_V3.csv'
+ctree_local_file <- 'D:/CRTI/data/cleaned/dupage_county_accepted_V4.csv'
+ctree_http_url <- 'https://don-morrison-2000.github.io/data/dupage_county_accepted_V4.csv'
 
 # Source Richard's modeling proram (either from local disk or the http server)
 if (file.exists(chicago_tree_app_local_file))
@@ -41,14 +41,12 @@ if (file.exists(ctree_local_file))
 }
 
 land_use <- read.delim('https://don-morrison-2000.github.io/data/land_use.csv', as.is=TRUE, header=FALSE)
-species <- c(unique(read.delim('https://don-morrison-2000.github.io/data/common_species.csv', as.is=TRUE, header=FALSE)$V1),"Other")
+common_species <- c(unique(read.delim('https://don-morrison-2000.github.io/data/common_species.csv', as.is=TRUE, header=FALSE)$V1),"Other")
 
 # Convert model categories to factors that match the UI names
-ctree[['STREETTREE']] <- as.factor(ifelse (ctree[['STREETTREE']]=='Y', "Street", ifelse (ctree[['STREETTREE']]=='N', "Non-street", "Unknown")))
-ctree[['LU']] <- as.factor(landUse$V2[as.numeric(as.character(ctree$LU))+1])
+ctree[['LU']] <- as.factor(land_use$V2[as.numeric(as.character(ctree$LU))])
 
-species_set <- "Common species"
-species_sets <- c("Common species", "Top 10")
+species_sets <- c("Top 10", "Common species")
 
 # Define all possible predictors then subset to just the ones that show up in the input data
 all_predictors <- c (
@@ -79,26 +77,21 @@ g_model_full <- NULL
 pred_row <- function (pred) {return (list(cb(pred), sl(pred)))}
 hr <- tags$hr(style="height:1px;border:none;color:#333;background-color:#333;")
 cb <- function(pred) {checkboxInput (inputId = paste('predict_on_', pred, sep=''), label = strong(names(all_predictors[all_predictors==pred])), width = '600px', value = FALSE)} 
-sl <- function(pred) {conditionalPanel (condition = paste('input.predict_on_', pred, '==true', sep=''), sliderInput (inputId = paste('predict_', pred, sep=''), label = '', step=(.1*(10^floor(log10(diff(range(ctree[[pred]])))))), min = floor(min(ctree[[pred]])), max = ceiling(max(ctree[[pred]])), value = signif(mean(ctree[[pred]]),3)), hr)}
+sl <- function(pred) {conditionalPanel (condition = paste('input.predict_on_', pred, '==true', sep=''), sliderInput (inputId = paste('predict_', pred, sep=''), label = '', step=(.1*(10^floor(log10(diff(range(ctree[[pred]])))))), min = floor(min(ctree[[pred]],na.rm=TRUE)), max = ceiling(max(ctree[[pred]],na.rm=TRUE)), value = signif(mean(ctree[[pred]],na.rm=TRUE),3)), hr)}
 
 
-# Models are maintined in a list with this format [[<<predictor formula]][[<species name]][[<land use desc>]]
-build_model <- function (ctree, predictors, species, land_use, street_tree)
+# Models are maintined in a list with this format [[<<predictor formula]][[<land use desc>]][[<species name]]
+build_model <- function (ctree, predictors, species, land_use)
 {
       formula <- paste('occur ~ ', paste(predictors,collapse='+'))
       land_use_desc <- paste(sort(land_use), collapse="+")
-      street_tree_desc <- paste(sort(street_tree), collapse="+")
       # Check if the model already exists in the cache
-      if (!is.null(g_models[[formula]][[land_use_desc]][[street_tree_desc]][[species]]) )
+      if (!is.null(g_models[[formula]][[land_use_desc]][[species]]) )
       {
-            return (g_models[[formula]][[land_use_desc]][[street_tree_desc]][[species]])
+            return (g_models[[formula]][[land_use_desc]][[species]])
       }
       else
       {
-#            if (!is.null(land_use))
-#            {
-#                  ctree <- subset(ctree, LU %in% land_use)
-#            }
             if (nrow(ctree) > 0)
             {
                   ctree[,'occur'] <- 0
@@ -106,7 +99,7 @@ build_model <- function (ctree, predictors, species, land_use, street_tree)
                   model <- glm(formula=as.formula(formula),family=binomial(link='logit'),data=ctree)
                   model <- list(cf=summary(model)$coefficients,aic=summary(model)$aic, species=species, land_use=land_use_desc, sample_size=sum(ctree$occur))
                   # Cache the model in the global space - note the super-assign operator '<<-'
-                  g_models[[formula]][[land_use_desc]][[street_tree_desc]][[species]] <<- model        
+                  g_models[[formula]][[land_use_desc]][[species]] <<- model        
                   return(model)
             }
             else
@@ -143,19 +136,6 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                                           condition = 'input.filter_species_set_on == true', 
                                                           radioButtons (inputId = "filter_species_set", label = '', choices = species_sets, selected = species_sets[1]),
                                                           checkboxInput (inputId = "filter_species_set_others", label = "Include others", value = TRUE)
-                                                    )
-                                              )
-                                        ),
-                                        column 
-                                        ( 
-                                              width=4,
-                                              wellPanel
-                                              ( 
-                                                    checkboxInput (inputId = "filter_street_on", label = strong("Street tree"), value = FALSE),
-                                                    conditionalPanel
-                                                    ( 
-                                                          condition = 'input.filter_street_on == true', 
-                                                          checkboxGroupInput (inputId = "filter_street", label = '', choices = levels(ctree$STREETTREE), selected = levels(ctree$STREETTREE))
                                                     )
                                               )
                                         ),
@@ -241,7 +221,7 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                                     width=3,
                                                     wellPanel
                                                     ( 
-                                                          checkboxGroupInput (inputId = "species", label = strong("Species"), choices = unique(species), selected = unique(species)[1])
+                                                          checkboxGroupInput (inputId = "species", label = strong("Species"), choices = common_species, selected = common_species[1])
                                                     )
                                               )
                                         )
@@ -292,7 +272,6 @@ server <- function(input, output, session)
       ################################################################################################################
 
       r_values  <- reactiveValues(
-                  filter_street = levels(ctree$STREETTREE), # Street tree setting included in data filter
                   filter_land_use = levels(ctree$LU),       # Land use settings included in data filter
                   m_preds = NULL,                           # Ordered list of selected model predictors
                   p_pred = NULL,                            # Single model predictor selected to be plotted
@@ -301,7 +280,7 @@ server <- function(input, output, session)
                   y = NULL,                                 # Zoomable y coordinate
                   show_predict_go = NULL,                   # Show/hide the Go button on the predict tab
                   run_predict_go = FALSE,                   # Flip the settng to trigger an update on the predictions
-                  filter_species_set = species_set,
+                  filter_species_set = NULL,
                   filter_species_set_others = TRUE,
                   species_names = NULL)
       
@@ -315,36 +294,6 @@ server <- function(input, output, session)
       # Filter tab
       # 
       ################################################################################################################
-      
-      
-      # Observe the street tree filter checkbox UI
-      observeEvent (input$filter_street_on, {
-            # Update the reactive value to match the UI
-            if (input$filter_street_on == TRUE)
-            {
-                  # The filter is turned on - restore the filter values
-                  r_values$filter_street <- input$filter_street
-            }
-            else
-            {
-                  # The filter is turned off - include all
-                  r_values$filter_street <- levels(ctree$STREETTREE)
-            }
-      })
-      
-      # Observe the street tree filter selection UI
-      observeEvent (input$filter_street, {
-            if (is.null(input$filter_street))
-            {
-                  # All values were deselected - do not allow this
-                  updateCheckboxGroupInput(session, "filter_street", choices = levels(ctree$STREETTREE), selected = c(r_values$filter_street))
-            }
-            else
-            {
-                  r_values$filter_street <- input$filter_street
-            }
-      }, ignoreNULL=FALSE)
-      
       
       # Observe the land use filter checkbox UI
       observeEvent (input$filter_land_use_on, {
@@ -428,7 +377,7 @@ server <- function(input, output, session)
             else 
             {
                   # Default to common species
-                  species_names <- commonSpecies$V1
+                  species_names <- common_species
             }
             if (r_values$filter_species_set_others == TRUE)
             {
@@ -437,7 +386,7 @@ server <- function(input, output, session)
                  species_names <- c(species_names, "Other")
             }
             r_values$species_names <- species_names
-            return (subset(data, LU %in% r_values$filter_land_use & STREETTREE %in% r_values$filter_street & GENUSSPECI %in% r_values$species_names))
+            return (subset(data, LU %in% r_values$filter_land_use & GENUSSPECI %in% r_values$species_names))
       })
       
       
@@ -534,8 +483,8 @@ server <- function(input, output, session)
       
       # Observe the filter tab's species list
       observeEvent (r_values$species_names, {
-            a <- input$species[input$species %in% r_values$species_names]
-            b <- a
+            #a <- input$species[input$species %in% r_values$species_names]
+            #b <- a
             updateCheckboxGroupInput (session, "species", choices = r_values$species_names, selected = input$species[input$species %in% r_values$species_names])
       })
       
@@ -568,7 +517,7 @@ server <- function(input, output, session)
                   for (species in r_values$species_list)
                   {
                         incProgress(1/n, detail = species)
-                        models[[species]] <- build_model (filter_data(), r_values$m_preds, species, r_values$filter_land_use, r_values$filter_street)
+                        models[[species]] <- build_model (filter_data(), r_values$m_preds, species, r_values$filter_land_use)
                   }
             })
             return (models)
@@ -584,8 +533,8 @@ server <- function(input, output, session)
                   return (NULL)     
             }
             
-            regression_coords <- data.frame(x=numeric(), y=numeric(), species_set==character(), species=character(), plot_predictor=character())
-            occurrence_coords <- data.frame(x=numeric(), y=numeric(), species=character(), species=character(), plot_predictor=character())    
+            regression_coords <- data.frame(x=numeric(), y=numeric(), species=character(), plot_predictor=character())
+            occurrence_coords <- data.frame(x=numeric(), y=numeric(), species=character(), plot_predictor=character())    
             
             models <- get_models()
             for (species in r_values$species_list)
@@ -593,8 +542,8 @@ server <- function(input, output, session)
                   if (!is.null(models[[species]]))
                   {
                         a <- graphOneResult(full=filter_data(),mod=models, sp=species,predictor=r_values$p_pred, retSpecs=TRUE)
-                        regression_coords <- rbind (regression_coords, data.frame(a[[1]], species_set=rep(species_set, nrow(a[[1]])), species=rep(species, nrow(a[[1]])), plot_predictor=rep(r_values$p_pred,nrow(a[[1]]))))
-                        occurrence_coords <- rbind (occurrence_coords, data.frame(a[[2]], species_set=rep(species_set, nrow(a[[2]])), species=rep(species, nrow(a[[2]])), plot_predictor=rep(r_values$p_pred,nrow(a[[2]]))))
+                        regression_coords <- rbind (regression_coords, data.frame(a[[1]], species=rep(species, nrow(a[[1]])), plot_predictor=rep(r_values$p_pred,nrow(a[[1]]))))
+                        occurrence_coords <- rbind (occurrence_coords, data.frame(a[[2]], species=rep(species, nrow(a[[2]])), plot_predictor=rep(r_values$p_pred,nrow(a[[2]]))))
                   }
             }
             
@@ -738,6 +687,8 @@ server <- function(input, output, session)
       
       
       output$out_prediction <- renderTable({ 
+            x = 5
+            x = 7
             predictor_names <- predict_go()$Predictor
             predictor_values <- predict_go()$Value
             data <- filter_data()
@@ -755,7 +706,7 @@ server <- function(input, output, session)
                         {
                               incProgress(1/n, detail = species)
                               
-                              model_id <- digest::digest(paste(paste(predictor_names, collapse='+'), r_values$filter_species_set, as.character(r_values$filter_species_set_others), paste(sort(r_values$filter_land_use),collapse='+'), paste(sort(r_values$filter_street), collapse='+'), species, collapse='+'))
+                              model_id <- digest::digest(paste(paste(predictor_names, collapse='+'), r_values$filter_species_set, as.character(r_values$filter_species_set_others), paste(sort(r_values$filter_land_use),collapse='+'), species, collapse='+'))
                               if ( length(g_model_full[[species]]$model_id) > 0 && g_model_full[[species]]$model_id == model_id)
                               {
                                     model <- g_model_full[[species]]$model
