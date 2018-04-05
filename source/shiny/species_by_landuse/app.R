@@ -164,7 +164,14 @@ ui <- fluidPage(
                width=6,
                wellPanel (
                      style = "overflow-y:scroll; min-height: 300px; max-height: 1000px",
-                     uiOutput(outputId = "ui_chart", width = '600px', height = "300px", dblclick = "plot_dblclick",  brush = brushOpts(id = "plot_brush", resetOnNew = TRUE))
+                     uiOutput(outputId = "ui_chart", width = '600px', height = "300px")
+               ),
+               fluidRow (
+                     column (
+                           width = 1,
+                           actionButton("ui_flip_chart", label = strong("Flip"))
+                     ) 
+                     
                )
          )
    )
@@ -178,9 +185,11 @@ server <- function(input, output, session) {
       ################################################################################################################
       r_values <- reactiveValues(
             abundance_level = 0,
-            display_species_list = vector("character"),
-            selected_species_list = vector("character"),
-            land_use_list = vector("character"))
+            display_species_list = vector("character"),   # List of species to display
+            selected_species_list = vector("character"),  # Selected species (including those not dislayed)
+            land_use_list = vector("character"),
+            flip_chart = TRUE
+      )
       
       # Observe the abundance level slider
       observeEvent(input$ui_abundance_level, {
@@ -211,7 +220,11 @@ server <- function(input, output, session) {
             r_values$selected_species_list <- NULL
             update_species_list()
       })
-      
+ 
+      # Observe the button to flip the chart
+      observeEvent(input$ui_flip_chart, {
+            r_values$flip_chart <- !r_values$flip_chart
+      })
       
       update_species_list <- reactive({
             r_values$display_species_list <- get_species(ctree, r_values$land_use_list, r_values$abundance_level)
@@ -253,19 +266,37 @@ server <- function(input, output, session) {
             # Melt the dataframe to prepare it for plotting. This results in 4 columns: 1) Species, 2) LandUse, 3)Category, 4) fit value
             fits <- melt(fits, c(id="Species","LandUse"), variable.name="Category")
             
-            # Plot the results
-            g <- ggplot(fits,aes(LandUse,value, fill=as.factor(Category))) + 
-                  geom_bar(position="dodge", stat="identity") + 
-                  facet_wrap(~Species, ncol=1) + 
-                  xlab('Land Use') + 
-                  ylab('Relative frequency') + 
-                  scale_fill_discrete(name=names(var_descs)[which(var_descs==input$ui_var)]) +
-                  theme(axis.text.x=element_text(angle = -30, hjust = 0)) 
-            # Add vertical separator lines if more than one land use category
-            if (length(levels(fits$LandUse)) > 1)
+            if (r_values$flip_chart)
             {
-                  g <- g + geom_vline(xintercept = seq(1.5,length(unique(fits$LandUse))-0.5,1)) 
-            }            
+                  # Plot the results
+                  g <- ggplot(fits,aes(LandUse,value, fill=as.factor(Category))) +
+                        geom_bar(position="dodge", stat="identity") +
+                        facet_wrap(~Species, ncol=1) +
+                        xlab('Land Use') +
+                        ylab('Relative frequency') +
+                        scale_fill_discrete(name=names(var_descs)[which(var_descs==input$ui_var)]) +
+                        theme(axis.text.x=element_text(angle = -30, hjust = 0))
+                  # Add vertical separator lines if more than one land use category
+                  if (length(levels(fits$LandUse)) > 1)
+                  {
+                        g <- g + geom_vline(xintercept = seq(1.5,length(unique(fits$LandUse))-0.5,1))
+                  }
+            }
+            else
+            {
+                  g <- ggplot(fits,aes(Category,value, fill=as.factor(LandUse))) +
+                        geom_bar(position="dodge", stat="identity") +
+                        facet_wrap(~Species, ncol=1) +
+                        xlab(names(var_descs)[which(var_descs==input$ui_var)]) +
+                        ylab('Relative frequency') +
+                        scale_fill_discrete(name="Land use") +
+                        theme(axis.text.x=element_text(angle = -30, hjust = 0))
+                  # Add vertical separator lines if more than one land use category
+                  if (length(levels(fits$Category)) > 1)
+                  {
+                        g <- g + geom_vline(xintercept = seq(1.5,length(unique(fits$Category))-0.5,1))
+                  }
+            }
             return (g)
       })
       
