@@ -102,7 +102,7 @@ build_model <- function (ctree, predictors, species, land_use)
                   ctree[,'occur'] <- 0
                   ctree[ctree[,'GENUSSPECI']==species,'occur'] <- 1
                   model <- glm(formula=as.formula(formula),family=binomial(link='logit'),data=ctree)
-                  model <- list(cf=summary(model)$coefficients,aic=summary(model)$aic, species=species, land_use=land_use_desc, sample_size=sum(ctree$occur))
+                  model <- list(cf=summary(model)$coefficients,aic=summary(model)$aic, species=species, land_use=land_use_desc, sample_size=sum(ctree$occur),r2=(1-(model$deviance/model$null.deviance)))
                   # Cache the model in the global space - note the super-assign operator '<<-'
                   g_models[[formula]][[land_use_desc]][[species]] <<- model        
                   return(model)
@@ -595,8 +595,8 @@ server <- function(input, output, session)
                   return (NULL)     
             }
             
-            col_names <- c('Species', 'Samples', 'Predictor','Estimate', 'Std. Error', 'z value', 'Pr(>|z|)', 'AIC')
-            stats <- data.frame(species=character(), sample_size=character(), predictor=character(), estimate=numeric(), std_error=numeric(), z_value=numeric(), pr=numeric(), aic=numeric())
+            col_names <- c('Species', 'Samples', 'Predictor','Estimate', 'Std. Error', 'z value', 'Pr(>|z|)', 'AIC', 'R**2')
+            stats <- data.frame(species=character(), sample_size=character(), predictor=character(), estimate=numeric(), std_error=numeric(), z_value=numeric(), pr=numeric(), aic=numeric(), r2=numeric)
             colnames(stats) <- col_names
             
             models <- get_models()
@@ -616,6 +616,7 @@ server <- function(input, output, session)
                         r[1,6] <- signif(m[3],4)
                         r[1,7] <- signif(m[4],4)
                         r[1,8] <- signif(model$aic,4)
+                        r[1,9] <- signif(model$r2,4)
                         colnames(r) <- col_names
                         # Add the row to the table
                         stats <- rbind (stats, as.data.frame(r))
