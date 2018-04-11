@@ -51,7 +51,7 @@ common_species <- unique(read.delim('https://don-morrison-2000.github.io/data/co
 # Convert model categories to factors that match the UI names
 ctree[['LU']] <- as.factor(land_use$V2[as.numeric(as.character(ctree$LU))])
 
-species_sets <- c("Top 10", "Common species")
+species_sets <- c("Top 10 species", "Top 10 genera", "Common species")
 
 # Define all possible predictors then subset to just the ones that show up in the input data
 all_predictors <- c (
@@ -375,9 +375,15 @@ server <- function(input, output, session)
       # Subset the data 
       filter_data <- reactive({
             data <- ctree
-            if (r_values$filter_species_set == 'Top 10')
+            if (r_values$filter_species_set == 'Top 10 species')
             {
                   species_names <- sort(names(head(sort(table(factor(data[['GENUSSPECI']])), decreasing = TRUE), 10)))
+            }
+            else if (r_values$filter_species_set ==  'Top 10 genera')
+            {
+                  # Coerce all species names to genus only, then select the top 10
+                  data[['GENUSSPECI']] <-  sapply(strsplit(data$GENUSSPECI," "),"[",1)
+                  species_names <- sort(names(head(sort(table(factor( data[['GENUSSPECI']]  )), decreasing = TRUE), 10)))
             }
             else 
             {
