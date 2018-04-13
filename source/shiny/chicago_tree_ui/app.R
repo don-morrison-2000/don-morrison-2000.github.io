@@ -18,7 +18,11 @@
 # Load packages
 library(shiny)
 library(shinythemes)
+library(shinyjs)
 library(ggplot2)
+library(foreign)
+library(nnet)
+library(reshape2)
 
 # This file has the graphing functions
 chicago_tree_app_local_file <- 'D:/CRTI/r_projects/shinyapp/chicagotree_dam.r'
@@ -76,6 +80,7 @@ all_predictors <- all_predictors[order(names(all_predictors))]
 # Model cache
 g_models <- list()
 g_model_full <- NULL
+g_models_multinomial <- list()
 
 
 # Functions to allow prediction page to generated programatically
@@ -114,9 +119,95 @@ build_model <- function (ctree, predictors, species, land_use)
       }
 }
 
+# Build a multinomial model (if it isn't already cached)
+build_model_multinomial = function (ctree, predictors, spps, land_use)
+{
+      formula=paste('GENUSSPECI ~ ', paste(predictors,collapse='+')) 
+      land_use_desc <- paste(sort(land_use), collapse="+")
+      spps_desc <- paste(sort(spps), collapse="+")
+      
+      if (!is.null(g_models_multinomial[[formula]][[land_use_desc]][[spps_desc]] ))
+      {
+            return (g_models_multinomial[[formula]][[land_use_desc]][[spps_desc]])
+      }
+      else
+      {
+            if (nrow(ctree) > 0)
+            {
+                  model <- multinom(formula, data = ctree, maxit=100) # MAX IT IS FOR TEST ONLY TO SPEED IT UP
+                  # Remove unused objects to reduce the size of the model
+                  model$fitted.values = NULL
+                  model$residuals = NULL
+                  model$weights = NULL
+                  model <- list(model_reduced=model, aic=model$AIC, deviance=model$deviance)
+                  g_models_multinomial[[formula]][[land_use_desc]][[spps_desc]] <<- model 
+                  return (model)
+            }
+            else
+            {
+                  return (NULL)
+            }
+      }
+}
+
+get_multinomial_occurrence_coords <- function (ctree, spps, predictor)
+{
+      num_bins = 20
+      occurrence_coords <- data.frame(x=numeric(), y=numeric(), species=character()) 
+      
+      for (spp in spps)
+      {
+            ctree[,'occur'] <- ifelse(ctree$GENUSSPECI==spp, 1,0)
+            bins <- unique(quantile(ctree[,predictor], prob=seq(0,1,len=num_bins),na.rm=TRUE))
+            bins[length(bins)] <- bins[length(bins)] + 1                  ## Necessary so the highest x falls in the last bin
+            x_binned <- cut(ctree[,predictor], breaks=bins, right=FALSE)
+            
+            mean_x <- tapply(ctree[,predictor], x_binned, mean)
+            mean_y <- tapply(ctree$occur, x_binned, mean)
+            occurrence_coords <- rbind (occurrence_coords, data.frame(x=mean_x, y=mean_y, species=rep(spp, length(mean_x))))
+      }
+      return (occurrence_coords)
+      
+}
+
+
+# Return a data frame where each row represents a predicted outcode
+get_multinomial_regression_coords = function(ctree, spps, model, predictor)
+{
+      num_predictions = 101
+#      ctree <- ctree[ctree$GENUSSPECI %in% spps,]
+      
+      # Create a data frame with the means of the non-predictors
+      non_pred_columns <- setdiff(all_predictors,predictor)
+      non_pred_means <- colMeans(ctree[non_pred_columns], na.rm=TRUE)
+      non_pred_matrix <- t(matrix(rep(non_pred_means,num_predictions),nrow=length(non_pred_columns)))
+      non_pred_df <- data.frame(non_pred_matrix)      
+      colnames(non_pred_df) <- non_pred_columns
+      
+      # Create a data frame with a set of values in the predictor variable range
+      range <- range(ctree[[predictor]],na.rm=TRUE)
+      min <- range[1]
+      max <- range[2]
+      pred_df <- data.frame(c(0:(num_predictions-1))*((max-min)/(num_predictions-1))+min)
+      colnames(pred_df) <- predictor
+      
+      # The input to the model prediction is a cbind of the predictor and non-predictor data frames
+      model_input_df <- cbind(pred_df, non_pred_df)
+      
+      # Get the prediction results and cbind it to the predictor values (for graphing purposes)
+      result_df <- cbind(pred_df, predict(model, newdata = model_input_df, type = "probs", se = TRUE))
+      colnames(result_df) <- c(predictor, model$lev)
+      result_df <- result_df[c(predictor,spps)]
+      result_df <- melt(result_df, id.vars=predictor, value.name="probability")
+      colnames(result_df) <- (c('x','species','y'))
+      
+      return (result_df[c('x','y','species')])
+}
+
 
 # Define UI
 ui <- fluidPage(theme = shinytheme("lumen"),
+                useShinyjs(),
                 titlePanel("DuPage County Tree Data"),
 #                shinythemes::themeSelector(),
                 fluidRow 
@@ -132,7 +223,7 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                         title='Filter',
                                         column 
                                         ( 
-                                              width=4,
+                                              width=3,
                                               wellPanel
                                               ( 
                                                     checkboxInput (inputId = "filter_species_set_on", label = strong("Species set"), value = FALSE),
@@ -146,7 +237,7 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                         ),
                                         column 
                                         ( 
-                                              width=4,
+                                              width=3,
                                               wellPanel
                                               ( 
                                                     checkboxInput (inputId = "filter_land_use_on", label = strong("Land use"), value = FALSE),
@@ -155,6 +246,22 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                                           condition = 'input.filter_land_use_on == true', 
                                                           checkboxGroupInput (inputId = "filter_land_use", label = '', choices = levels(ctree$LU), selected = levels(ctree$LU))
                                                     )
+                                              )
+                                        ),
+                                        column 
+                                        ( 
+                                              width=3,
+                                              wellPanel
+                                              (  
+                                                    checkboxGroupInput (inputId = "filter_model_predictors", label = strong("Model Predictors"), choices = all_predictors, selected = all_predictors)
+                                              )
+                                        ),
+                                        column 
+                                        ( 
+                                              width=2,
+                                              wellPanel
+                                              ( 
+                                                    radioButtons (inputId = "filter_model_type", label = strong('Model type'), choices = c("Binomial","Multinomial"), selected = "Binomial")
                                               )
                                         )
                                   ),
@@ -210,14 +317,6 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                                     width=3,
                                                     wellPanel
                                                     (  
-                                                          checkboxGroupInput (inputId = "model_predictors", label = strong("Model Predictors"), choices = all_predictors, selected = all_predictors[1])
-                                                    )
-                                              ),
-                                              column 
-                                              ( 
-                                                    width=3,
-                                                    wellPanel
-                                                    (  
                                                           radioButtons (inputId = "plot_predictor", label = strong("Plot Predictor"), choices = all_predictors, selected = all_predictors[1])
                                                     )
                                               ),
@@ -247,15 +346,15 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                         column 
                                         ( 
                                               width=7,
-                                              conditionalPanel
-                                              ( 
-                                                    condition = 'output.show_predict_go == true', 
-                                                    wellPanel
-                                                    (
-                                                          width=2,
-                                                          actionButton ("predict_go", "Build models") 
-                                                    )
-                                              ),
+                                              # conditionalPanel
+                                              # ( 
+                                              #       condition = 'output.show_predict_go == true', 
+                                              #       wellPanel
+                                              #       (
+                                              #             width=2,
+                                              #             actionButton ("predict_go", "Build models") 
+                                              #       )
+                                              # ),
                                               wellPanel
                                               (  
                                                     width=5, 
@@ -371,7 +470,47 @@ server <- function(input, output, session)
             r_values$filter_species_set_others <- input$filter_species_set_others
       })
       
+      # Observe the model type selection (binomial vs multinomial)
+      observeEvent (input$filter_model_type, {
+            if (input$filter_model_type == "Multinomial")
+            {
+                  # Turn on all predictors for Multinomial since it takes a loooong time to rebuild the model
+                  updateCheckboxGroupInput(session, "filter_model_predictors", choices=all_predictors, selected=all_predictors)
+                  r_values$m_preds <- all_predictors
+            }
+      })
       
+      # Observe the model predictors UI
+      observeEvent (input$filter_model_predictors, {
+            m_preds <- character(0)
+            if (!is.null(input$filter_model_predictors))
+            {
+                  # Construct a list of selected model predictors - in order that they were selected
+                  # First list in order the previously existing model predictors (except leave out those that have been deslected)
+                  for (x in r_values$m_preds) {
+                        if ((x %in% input$filter_model_predictors)) 
+                        {
+                              m_preds <- c(m_preds, all_predictors[all_predictors==x])
+                        }
+                  }
+                  # Now add in the newly selected predictors. Since this is inside an observeEvent, we would expect only 
+                  # one new predictor. If there are more than one, then there is no way to determine the order - oh well....
+                  for (x in input$filter_model_predictors) {
+                        if (!(x %in% r_values$m_preds)) 
+                        {
+                              m_preds <- c(m_preds, all_predictors[all_predictors==x])
+                        }
+                  }
+            }
+            # Set the plot predictor choice to refect the ordered list of model predictors and update the UI
+            p_choices <- m_preds
+            p_selected <- if (input$plot_predictor %in% p_choices) input$plot_predictor else p_choices[1]
+            updateRadioButtons(session, "plot_predictor", choices=as.list(m_preds), selected=p_selected)
+            # Update the reactive value to propagate the new model predictors
+            r_values$m_preds <- m_preds
+      })
+      
+
       # Subset the data 
       filter_data <- reactive({
             data <- ctree
@@ -412,37 +551,6 @@ server <- function(input, output, session)
       # 
       ################################################################################################################
       
-      
-      # Observe the model predictors UI
-      observeEvent (input$model_predictors, {
-            m_preds <- character(0)
-            if (!is.null(input$model_predictors))
-            {
-                  # Construct a list of selected model predictors - in order that they were selected
-                  # First list in order the previously existing model predictors (except leave out those that have been deslected)
-                  for (x in r_values$m_preds) {
-                        if ((x %in% input$model_predictors)) 
-                        {
-                              m_preds <- c(m_preds, all_predictors[all_predictors==x])
-                        }
-                  }
-                  # Now add in the newly selected predictors. Since this is inside an observeEvent, we would expect only 
-                  # one new predictor. If there are more than one, then there is no way to determine the order - oh well....
-                  for (x in input$model_predictors) {
-                        if (!(x %in% r_values$m_preds)) 
-                        {
-                              m_preds <- c(m_preds, all_predictors[all_predictors==x])
-                        }
-                  }
-            }
-            # Set the plot predictor choice to refect the ordered list of model predictors and update the UI
-            p_choices <- m_preds
-            p_selected <- if (input$plot_predictor %in% p_choices) input$plot_predictor else p_choices[1]
-            updateRadioButtons(session, "plot_predictor", choices=as.list(m_preds), selected=p_selected)
-            # Update the reactive value to propagate the new model predictors
-            r_values$m_preds <- m_preds
-      })
-      
       # Observe the plot predictors UI
       observeEvent (input$plot_predictors, {
             # Update the reactive value to match the UI
@@ -458,21 +566,21 @@ server <- function(input, output, session)
 
       
       # Observe the model predictor UI
-      observeEvent (input$model_predictors, {
+      observeEvent (input$filter_model_predictors, {
             m_preds <- character(0)
-            if (!is.null(input$model_predictors))
+            if (!is.null(input$filter_model_predictors))
             {
                   # Construct a list of selected model predictors - in order that they were selected
                   # First list in order the previously existing model predictors (except leave out those that have been deslected)
                   for (x in r_values$m_preds) {
-                        if ((x %in% input$model_predictors)) 
+                        if ((x %in% input$filter_model_predictors)) 
                         {
                               m_preds <- c(m_preds, all_predictors[all_predictors==x])
                         }
                   }
                   # Now add in the newly selected predictors. Since this is inside an observeEvent, we would expect only 
                   # one new predictor. If there are more than one, then there is no way to determine the order - oh well....
-                  for (x in input$model_predictors) {
+                  for (x in input$filter_model_predictors) {
                         if (!(x %in% m_preds)) 
                         {
                               m_preds <- c(m_preds, all_predictors[all_predictors==x])
@@ -516,22 +624,38 @@ server <- function(input, output, session)
 
       # Build the models for the coordinates that need to be plotted
       get_models <- reactive({ 
+            x=5
             # Make sure all paramters are set
-            if (is.null(r_values$m_preds)|| is.null(r_values$species_list) || is.null(r_values$filter_land_use) || length(r_values$filter_land_use)==0)
+            #if (is.null(r_values$m_preds)|| is.null(r_values$species_list) || is.null(r_values$filter_land_use) || length(r_values$filter_land_use)==0)
+            if (is.null(r_values$m_preds)|| is.null(r_values$filter_land_use) || length(r_values$filter_land_use)==0)
             {
                   return (NULL)   
             }
             
-            withProgress (message="Generating model", value=0, {
-                  n <- length(r_values$species_list)
-                  models <- list()
-                  for (species in r_values$species_list)
-                  {
-                        incProgress(1/n, detail = species)
-                        models[[species]] <- build_model (filter_data(), r_values$m_preds, species, r_values$filter_land_use)
-                  }
-            })
-            return (models)
+            if (input$filter_model_type == 'Binomial')
+            {
+                  withProgress (message="Generating binomial model", value=0, {
+                        n <- length(r_values$species_list)
+                        models <- list()
+                        for (species in r_values$species_list)
+                        {
+                              incProgress(1/n, detail = species)
+                              models[[species]] <- build_model (filter_data(), r_values$m_preds, species, r_values$filter_land_use)
+                        }
+                  })
+                  return (models)
+            }
+            else if (input$filter_model_type == 'Multinomial')
+            {
+                  withProgress (message="Generating multinomial model", value=0, {
+                        incProgress(.2)
+                        model <- build_model_multinomial (filter_data(), r_values$m_preds, r_values$species_names, r_values$filter_land_use)
+                        incProgress(.1)
+                  })
+                  return (model)
+            }
+            else 
+                  return (NULL)
       })
       
 
@@ -543,19 +667,30 @@ server <- function(input, output, session)
             {
                   return (NULL)     
             }
-            
-            regression_coords <- data.frame(x=numeric(), y=numeric(), species=character(), plot_predictor=character())
-            occurrence_coords <- data.frame(x=numeric(), y=numeric(), species=character(), plot_predictor=character())    
-            
+
             models <- get_models()
-            for (species in r_values$species_list)
+            if (input$filter_model_type == 'Binomial')
             {
-                  if (!is.null(models[[species]]))
+                  regression_coords <- data.frame(x=numeric(), y=numeric(), species=character(), plot_predictor=character())
+                  occurrence_coords <- data.frame(x=numeric(), y=numeric(), species=character(), plot_predictor=character())
+                  for (species in r_values$species_list)
                   {
-                        a <- graphOneResult(full=filter_data(),mod=models, sp=species,predictor=r_values$p_pred, retSpecs=TRUE)
-                        regression_coords <- rbind (regression_coords, data.frame(a[[1]], species=rep(species, nrow(a[[1]])), plot_predictor=rep(r_values$p_pred,nrow(a[[1]]))))
-                        occurrence_coords <- rbind (occurrence_coords, data.frame(a[[2]], species=rep(species, nrow(a[[2]])), plot_predictor=rep(r_values$p_pred,nrow(a[[2]]))))
+                        if (!is.null(models[[species]]))
+                        {
+                              a <- graphOneResult(full=filter_data(),mod=models, sp=species,predictor=r_values$p_pred, retSpecs=TRUE)
+                              regression_coords <- rbind (regression_coords, data.frame(a[[1]], species=rep(species, nrow(a[[1]])), plot_predictor=rep(r_values$p_pred,nrow(a[[1]]))))
+                              occurrence_coords <- rbind (occurrence_coords, data.frame(a[[2]], species=rep(species, nrow(a[[2]])), plot_predictor=rep(r_values$p_pred,nrow(a[[2]]))))
+                        }
                   }
+            }
+            else if (input$filter_model_type == 'Multinomial')
+            {
+                  if (length(intersect(r_values$species_list, models$model_reduced$lev)) == 0)
+                  {
+                        return (NULL)
+                  }
+                  regression_coords <- get_multinomial_regression_coords(filter_data(), r_values$species_list, models$model_reduced,r_values$p_pred)
+                  occurrence_coords <- get_multinomial_occurrence_coords (filter_data(), r_values$species_list, r_values$p_pred)
             }
             
             label_font <- element_text(family="sans", color='black', size=16)
@@ -600,35 +735,45 @@ server <- function(input, output, session)
             {
                   return (NULL)     
             }
-            
-            col_names <- c('Species', 'Samples', 'Predictor','Estimate', 'Std. Error', 'z value', 'Pr(>|z|)', 'AIC', 'R**2')
-            stats <- data.frame(species=character(), sample_size=character(), predictor=character(), estimate=numeric(), std_error=numeric(), z_value=numeric(), pr=numeric(), aic=numeric(), r2=numeric)
-            colnames(stats) <- col_names
-            
+
             models <- get_models()
-            for (model in models)
+            if (input$filter_model_type == 'Binomial')
             {
-                  if (r_values$p_pred %in% rownames(model$cf))
+                  col_names <- c('Model', 'Species', 'Samples', 'Predictor','Estimate', 'Std. Error', 'z value', 'Pr(>|z|)', 'AIC', 'R**2')
+                  stats <- data.frame(model=character(), species=character(), sample_size=character(), predictor=character(), estimate=numeric(), std_error=numeric(), z_value=numeric(), pr=numeric(), aic=numeric(), r2=numeric)
+                  colnames(stats) <- col_names
+                  
+                  for (model in models)
                   {
-                        # Extract the model statistics summary
-                        m <- model$cf[r_values$p_pred,]
-                        # Populate the statistics table row
-                        r = array(0,dim=c(1,length(col_names)))
-                        r[1,1] <- model$species
-                        r[1,2] <- model$sample_size
-                        r[1,3] <- r_values$p_pred
-                        r[1,4] <- signif(m[1],4)
-                        r[1,5] <- signif(m[2],4)
-                        r[1,6] <- signif(m[3],4)
-                        r[1,7] <- signif(m[4],4)
-                        r[1,8] <- signif(model$aic,4)
-                        r[1,9] <- signif(model$r2,4)
-                        colnames(r) <- col_names
-                        # Add the row to the table
-                        stats <- rbind (stats, as.data.frame(r))
+                        if (r_values$p_pred %in% rownames(model$cf))
+                        {
+                              # Extract the model statistics summary
+                              m <- model$cf[r_values$p_pred,]
+                              # Populate the statistics table row
+                              r = array(0,dim=c(1,length(col_names)))
+                              r[1,1] <- "Binomial"
+                              r[1,2] <- model$species
+                              r[1,3] <- model$sample_size
+                              r[1,4] <- r_values$p_pred
+                              r[1,5] <- signif(m[1],4)
+                              r[1,6] <- signif(m[2],4)
+                              r[1,7] <- signif(m[3],4)
+                              r[1,8] <- signif(m[4],4)
+                              r[1,9] <- signif(model$aic,4)
+                              r[1,10] <- signif(model$r2,4)
+                              colnames(r) <- col_names
+                              # Add the row to the table
+                              stats <- rbind (stats, as.data.frame(r))
+                        }
                   }
+                  return (stats)
             }
-            return (stats)
+            else if (input$filter_model_type == 'Multinomial')
+            {
+                  stats <- data.frame("Multinomial", signif(models$aic,4), signif(models$deviance,4))
+                  colnames(stats) <- c('Model', 'AIC', ' Deviance')
+                  return (stats)
+            }
       })
       
   
@@ -642,22 +787,35 @@ server <- function(input, output, session)
       # 
       ################################################################################################################
       
-      
-      # Show the Go button when a predictor checkbox changes state
+      # 
+      # # Show the Go button when a predictor checkbox changes state
       lapply (X=all_predictors, FUN=function (i)
       {
             observeEvent (input[[paste('predict_on_', i, sep='')]], {
-                  r_values$show_predict_go <- TRUE
-            }, ignoreInit = TRUE)      
-      })
-      # Hide the Go button after it is clicked
-      observeEvent (input$predict_go, {
-            r_values$show_predict_go <- FALSE
+                  r_values$run_predict_go <- !r_values$run_predict_go
+            }, ignoreInit = TRUE)
       })
       
-      
-      # Observe the GO button
-      observeEvent (input$predict_go, {
+      # Hide non-selected predictors and set the values to the mean
+      observeEvent (input$filter_model_predictors, {
+            for (pred in all_predictors)
+            {
+                  checkbox_id <- paste('predict_on_', pred, sep='')
+                  slider_id <- paste('predict_', pred, sep='')
+                  if (!is.null(input[[checkbox_id]]))
+                  {
+                        if ((pred %in% input$filter_model_predictors))
+                        {
+                              shinyjs::show(checkbox_id)
+                              shinyjs::show(slider_id)
+                        }
+                        else
+                        {
+                              shinyjs::hide(checkbox_id)
+                              shinyjs::hide(slider_id)
+                        }
+                  }
+            }
             # Trigger the prediction update
             r_values$run_predict_go <- !r_values$run_predict_go
       })
@@ -667,74 +825,77 @@ server <- function(input, output, session)
       lapply (X=all_predictors, FUN=function (i)
       {
             observeEvent (input[[paste('predict_', i, sep='')]], {
-                  if (r_values$show_predict_go == FALSE)
-                  {
-                        # Trigger the prediction update
-                        r_values$run_predict_go <- !r_values$run_predict_go
-                  }
+                  # Trigger the prediction update
+                  r_values$run_predict_go <- !r_values$run_predict_go
             }, ignoreInit = TRUE)      
       })
       
       # This is triggered when the "run_predict_go" switch is flipped
       predict_go <- eventReactive(r_values$run_predict_go, {
-            df <- data.frame(predictor = character(), value=numeric(), stringsAsFactors = FALSE)
+            df <- data.frame(Predictor = character(), Value=numeric(), stringsAsFactors = FALSE)
             for (p in all_predictors)
             {
-                  if (input[[paste('predict_on_', p, sep='')]] == TRUE)
+                  if ( (input[[paste('predict_on_', p, sep='')]] == TRUE) && (p %in% input$filter_model_predictors))
                   {
-                        df <-rbind(df, data.frame(p, input[[paste('predict_',p,sep='')]], stringsAsFactors = FALSE))
+                        df <-rbind(df, data.frame(Predictor=p, Value=input[[paste('predict_',p,sep='')]], stringsAsFactors = FALSE))
+                  }
+                  else
+                  {
+                        df <-rbind(df, data.frame(Predictor=p, Value=mean(filter_data()[[p]],na.rm=TRUE), stringsAsFactors = FALSE))
                   }
             }
             colnames(df) <- c("Predictor", "Value")
             return (df)
       })
-      
-      
-      # Send the hide/show go button value to the UI 
-      output$show_predict_go <- reactive({ 
-            return (r_values$show_predict_go)
-      })
-      # This seems to be required to force the update of output$show_predict_go to be send to the UI and control the conditional panel 
-      outputOptions(output, 'show_predict_go', suspendWhenHidden=FALSE)      
-      
+  
       
       output$out_prediction <- renderTable({ 
-            x = 5
-            x = 7
             predictor_names <- predict_go()$Predictor
             predictor_values <- predict_go()$Value
             data <- filter_data()
             
+
             if (length(predictor_names) > 0)
             {
                   model_input <- as.data.frame(t(predictor_values))
                   colnames(model_input) <- predictor_names
                   
+                  
                   # Create the models (one per species) for the prediction
                   df <- data.frame(predictor = character(), prediction = numeric(), aic = numeric(), stringsAsFactors = FALSE)
-                  withProgress (message="Generating model", value=0, {
-                        n <- length(r_values$species_names)
-                        for (species in unique(r_values$species_names)) 
-                        {
-                              incProgress(1/n, detail = species)
-                              
-                              model_id <- digest::digest(paste(paste(predictor_names, collapse='+'), r_values$filter_species_set, as.character(r_values$filter_species_set_others), paste(sort(r_values$filter_land_use),collapse='+'), species, collapse='+'))
-                              if ( length(g_model_full[[species]]$model_id) > 0 && g_model_full[[species]]$model_id == model_id)
+                  if (input$filter_model_type == 'Binomial')
+                  {
+                        withProgress (message="Generating model", value=0, {
+                        
+                              n <- length(r_values$species_names)
+                              for (species in unique(r_values$species_names)) 
                               {
-                                    model <- g_model_full[[species]]$model
+                                    incProgress(1/n, detail = species)
+                                    
+                                    model_id <- digest::digest(paste(paste(predictor_names, collapse='+'), r_values$filter_species_set, as.character(r_values$filter_species_set_others), paste(sort(r_values$filter_land_use),collapse='+'), species, collapse='+'))
+                                    if ( length(g_model_full[[species]]$model_id) > 0 && g_model_full[[species]]$model_id == model_id)
+                                    {
+                                          model <- g_model_full[[species]]$model
+                                    }
+                                    else 
+                                    {
+                                          formula <- paste('occur ~ ', paste(predictor_names,collapse='+'))
+                                          data[,'occur'] <- ifelse (data[,'GENUSSPECI']==species, 1,0)
+                                          model <- glm(formula=as.formula(formula),family=binomial(link='logit'),data=data)
+                                          g_model_full[[species]]$model_id <<- model_id
+                                          g_model_full[[species]]$model <<- model
+                                    }
+                                    prediction <- predict(model,model_input, type="response")
+                                    df <- rbind (df, data.frame(species, prediction, as.integer(model$aic)))
                               }
-                              else 
-                              {
-                                    formula <- paste('occur ~ ', paste(predictor_names,collapse='+'))
-                                    data[,'occur'] <- ifelse (data[,'GENUSSPECI']==species, 1,0)
-                                    model <- glm(formula=as.formula(formula),family=binomial(link='logit'),data=data)
-                                    g_model_full[[species]]$model_id <<- model_id
-                                    g_model_full[[species]]$model <<- model
-                              }
-                              prediction <- predict(model,model_input, type="response")
-                              df <- rbind (df, data.frame(species, prediction, as.integer(model$aic)))
-                        }
-                  })
+                        })
+                  }
+                  else if (input$filter_model_type == 'Multinomial')
+                  {
+                        model <- get_models()
+                        df <- rbind(df, data.frame(predict(model$model_reduced, newdata = model_input, type = "probs", se = TRUE)))
+                        df <- cbind(model$model_reduced$lev, df,rep(as.integer(model$aic,nrow(df))))
+                  }
                   colnames(df) <- c("Species", "Probability", "AIC")
                   df <- df[order(df$Probability, decreasing = TRUE),]
                   return (rbind(df, data.frame(Species='Total', Probability=sum(df$Probability), AIC='')))
