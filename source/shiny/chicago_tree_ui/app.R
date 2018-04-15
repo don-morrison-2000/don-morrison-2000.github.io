@@ -80,6 +80,8 @@ all_predictors <- all_predictors[order(names(all_predictors))]
 # Model cache
 g_models <- list()
 
+MAX_ITER = 100
+
 
 # Functions to allow prediction page to generated programatically
 pred_row <- function (pred) {return (list(cb(pred), sl(pred)))}
@@ -87,64 +89,6 @@ hr <- tags$hr(style="height:1px;border:none;color:#333;background-color:#333;")
 cb <- function(pred) {checkboxInput (inputId = paste('predict_on_', pred, sep=''), label = strong(names(all_predictors[all_predictors==pred])), width = '600px', value = FALSE)} 
 sl <- function(pred) {conditionalPanel (condition = paste('input.predict_on_', pred, '==true', sep=''), sliderInput (inputId = paste('predict_', pred, sep=''), label = '', step=(.1*(10^floor(log10(diff(range(ctree[[pred]])))))), min = floor(min(ctree[[pred]],na.rm=TRUE)), max = ceiling(max(ctree[[pred]],na.rm=TRUE)), value = signif(mean(ctree[[pred]],na.rm=TRUE),3)), hr)}
 
-
-# Hash the model inputs
-get_model_id <- function (type, formula, spp_list, land_use_list)
-{
-      model_id <- digest::digest(paste(type, gsub(' ','',formula), paste(sort(spp_list),collapse='+'),  paste(sort(land_use_list),collapse='+'), collapse='+', sep='%%'))
-      return (model_id)
-}
-
-
-build_model <- function (type, ctree, predictors, species, land_use)
-{
-      predictors <- paste(predictors,collapse='+')
-      land_use_desc <- paste(sort(land_use), collapse="+")
-      # Check if the model already exists in the cache
-      model_id <- get_model_id(type, predictors, species, land_use_desc)
-      if (!is.null(g_models[[model_id]]) )
-      {
-            return (g_models[[model_id]])
-      }
-      else
-      {
-            if (nrow(ctree) > 0)
-            {
-                  if (type == "Binomial")
-                  {
-                        ctree[,'occur'] <- ifelse (ctree[,'GENUSSPECI']==species, 1,0)
-                        model <- glm(formula=as.formula(paste('occur ~ ', predictors)),family=binomial(link='logit'),data=ctree)
-                        cf <- summary(model)$coefficients
-                        model$data <- NULL
-                        model$y <- NULL
-                        model$linear.predictors <- NULL
-                        model$weights <- NULL
-                        model$fitted.values <- NULL
-                        model$model <- NULL
-                        model$prior.weights <- NULL
-                        model$residuals <- NULL
-                        model$effects <- NULL
-                        model$qr$qr <- NULL
-                        model <- list(model_reduced=model, cf=cf, aic=model$aic, species=species, sample_size=sum(ctree$occur),r2=(1-(model$deviance/model$null.deviance)))
-                  }
-                  else if (type == "Multinomial")
-                  {
-                        model <- multinom(paste('GENUSSPECI ~ ', predictors), data = ctree, maxit=100) # MAX IT IS FOR TEST ONLY TO SPEED IT UP
-                        model$fitted.values = NULL
-                        model$residuals = NULL
-                        model$weights = NULL
-                        model <- list(model_reduced=model, aic=model$AIC, deviance=model$deviance)
-                  }
-                  # Cache the model in the global space - note the super-assign operator '<<-'
-                  g_models[[model_id]] <<- model 
-                  return (model)
-            }
-            else
-            {
-                  return (NULL)
-            }
-      }
-}
 
 
 get_multinomial_occurrence_coords <- function (ctree, spps, predictor)
@@ -413,6 +357,7 @@ server <- function(input, output, session)
             {
                   r_values$filter_land_use <- input$filter_land_use
             }
+            
       }, ignoreNULL=FALSE)
       
       
@@ -606,6 +551,9 @@ server <- function(input, output, session)
             }
       })
       
+      get_filter_hash <- reactive ({
+            return (digest::digest(paste(r_values$filter_land_use, r_values$filter_species_set, r_values$m_preds, input$filter_model_type, r_values$filter_species_set_others)))
+      })
 
       # Build the models for the coordinates that need to be plotted
       get_models <- reactive({ 
@@ -615,7 +563,15 @@ server <- function(input, output, session)
                   return (NULL)   
             }
             
-            filter_data()
+            filter_data <- filter_data()
+            filter_hash <- get_filter_hash()
+            predictors <- paste(r_values$m_preds,collapse='+')
+            
+            if (nrow(ctree) == 0)
+            {
+                  return (NULL)
+            }
+            
             if (input$filter_model_type == 'Binomial')
             {
                   withProgress (message="Generating binomial model", value=0, {
@@ -624,7 +580,27 @@ server <- function(input, output, session)
                         for (species in r_values$species_names)
                         {
                               incProgress(1/n, detail = species)
-                              models[[species]] <- build_model (input$filter_model_type, filter_data(), r_values$m_preds, species, r_values$filter_land_use)
+                              model_id <- paste(species, filter_hash)
+                              if (!is.null(g_models[[model_id]]) )
+                              {
+                                    return (g_models[[model_id]])
+                              }
+                              # Build a binomial model for this species
+                              filter_data[,'occur'] <- ifelse (filter_data[,'GENUSSPECI']==species, 1,0)
+                              model <- glm(formula=as.formula(paste('occur ~ ', predictors)),family=binomial(link='logit'),data=filter_data)
+                              cf <- summary(model)$coefficients
+                              model$data <- NULL
+                              model$y <- NULL
+                              model$linear.predictors <- NULL
+                              model$weights <- NULL
+                              model$fitted.values <- NULL
+                              model$model <- NULL
+                              model$prior.weights <- NULL
+                              model$residuals <- NULL
+                              model$effects <- NULL
+                              model$qr$qr <- NULL
+                              models[[species]] <- list(model_reduced=model, cf=cf, aic=model$aic, species=species, sample_size=sum(filter_data$occur),r2=(1-(model$deviance/model$null.deviance)))
+                              g_models[[model_id]] <<- model 
                         }
                   })
                   return (models)
@@ -632,9 +608,18 @@ server <- function(input, output, session)
             else if (input$filter_model_type == 'Multinomial')
             {
                   withProgress (message="Generating multinomial model", value=0, {
-                        incProgress(.2)
-                        model <- build_model (input$filter_model_type, filter_data(), r_values$m_preds, r_values$species_names, r_values$filter_land_use)
-                        incProgress(.1)
+                        incProgress(.2, detail="Wait - this can take minutes")
+                        if (!is.null(g_models[[filter_hash]]) )
+                        {
+                              return (g_models[[filter_hash]])
+                        }
+                        model <- multinom(paste('GENUSSPECI ~ ', predictors), data = filter_data, maxit=MAX_ITER) # MAX IT IS FOR TEST ONLY TO SPEED IT UP
+                        model$fitted.values = NULL
+                        model$residuals = NULL
+                        model$weights = NULL
+                        model <- list(model_reduced=model, aic=model$AIC, deviance=model$deviance)
+                        g_models[[filter_hash]] <<- model 
+                        incProgress(.6)
                   })
                   return (model)
             }
@@ -843,7 +828,6 @@ server <- function(input, output, session)
             {
                   model_input <- as.data.frame(t(predictor_values))
                   colnames(model_input) <- predictor_names
-                  
                   
                   # Create the models (one per species) for the prediction
                   df <- data.frame(predictor = character(), prediction = numeric(), aic = numeric(), stringsAsFactors = FALSE)
