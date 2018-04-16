@@ -11,7 +11,7 @@
 # runApp('chicago_tree_ui')
 
 #
-# To run from the web
+# To run from an R command line
 # library(shiny)
 # shiny::runGitHub('don-morrison-2000.github.io','don-morrison-2000', subdir='source/shiny/chicago_tree_ui/')
 
@@ -24,9 +24,6 @@ library(foreign)
 library(nnet)
 library(reshape2)
 
-# This file has the graphing functions
-chicago_tree_app_local_file <- 'D:/CRTI/r_projects/shinyapp/chicagotree_dam.r'
-chicago_tree_app_url <- 'https://don-morrison-2000.github.io/source/chicagotree_dam.r'
 
 ctree_local_file <- 'D:/CRTI/data/cleaned/dupage_county_accepted_V4.csv'
 ctree_http_url <- 'https://don-morrison-2000.github.io/data/dupage_county_accepted_V4.csv'
@@ -72,7 +69,8 @@ all_predictors <- all_predictors[order(names(all_predictors))]
 # Model cache
 g_models <- list()
 
-MAX_ITER = 1
+# Set this to 1 for fast multinomial testing (100 for production)
+MAX_ITER = 100
 
 
 # Functions to allow prediction page to generated programatically
@@ -448,16 +446,6 @@ server <- function(input, output, session)
       ################################################################################################################
       
  
-      # Observe the model type selection (binomial vs multinomial)
-      observeEvent (input$filter_model_type, {
-            if (input$filter_model_type == "Multinomial")
-            {
-                  # Turn on all predictors for Multinomial since it takes a loooong time to rebuild the model
-                  updateCheckboxGroupInput(session, "filter_model_predictors", choices=all_predictors, selected=all_predictors)
-                  r_values$m_preds <- all_predictors
-            }
-      })
-      
       # Observe the model predictors UI
       observeEvent (input$filter_model_predictors, {
             m_preds <- character(0)
