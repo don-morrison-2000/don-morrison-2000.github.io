@@ -83,6 +83,7 @@ sl <- function(pred) {conditionalPanel (condition = paste('input.predict_on_', p
 
 # Define UI
 ui <- fluidPage(theme = shinytheme("lumen"),
+                tags$head(tags$style(HTML(".shiny-notification {height:100px; width:600px; position:fixed; opacity:1.0; top:calc(50% - 50px);; left:calc(50% - 300px);;}"))),
                 useShinyjs(),
                 titlePanel("DuPage County Tree Data"),
 #                shinythemes::themeSelector(),
