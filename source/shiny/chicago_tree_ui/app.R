@@ -23,6 +23,8 @@ library(ggplot2)
 library(foreign)
 library(nnet)
 library(reshape2)
+library(stringr)
+library(Hmisc)
 
 
 # Set this to 1 for fast multinomial testing (100 for production)
@@ -75,6 +77,13 @@ all_predictors_categorical <- c('Land use' = 'LU')
 all_predictors <- c(all_predictors_quantitative, all_predictors_categorical)
 
 
+# Functions to allow prediction page to generated programatically
+pred_row <- function (pred) {return (list(cb(pred), sl(pred)))}
+hr <- tags$hr(style="height:1px;border:none;color:#333;background-color:#333;")
+cb <- function(pred) {checkboxInput (inputId = paste('predict_on_', pred, sep=''), label = strong(names(all_predictors_quantitative[all_predictors_quantitative==pred])), width = '600px', value = FALSE)} 
+sl <- function(pred) {conditionalPanel (condition = paste('input.predict_on_', pred, '==true', sep=''), sliderInput (inputId = paste('predict_', pred, sep=''), label = '', step=(.1*(10^floor(log10(diff(range(ctree[[pred]])))))), min = floor(min(ctree[[pred]],na.rm=TRUE)), max = ceiling(max(ctree[[pred]],na.rm=TRUE)), value = signif(mean(ctree[[pred]],na.rm=TRUE),3)), hr)}
+
+
 # Model cache
 models_local_file <- paste(getwd(), '/', 'models.rds', sep='')
 models_http_url <- 'https://don-morrison-2000.github.io/source/shiny/chicago_tree_ui/models.rds'
@@ -86,96 +95,134 @@ if (file.exists(models_local_file))
       g_models <- list(readRDS(gzcon(url(models_http_url))))[[1]]
 }
 
-# Functions to allow prediction page to generated programatically
-pred_row <- function (pred) {return (list(cb(pred), sl(pred)))}
-hr <- tags$hr(style="height:1px;border:none;color:#333;background-color:#333;")
-cb <- function(pred) {checkboxInput (inputId = paste('predict_on_', pred, sep=''), label = strong(names(all_predictors_quantitative[all_predictors_quantitative==pred])), width = '600px', value = FALSE)} 
-sl <- function(pred) {conditionalPanel (condition = paste('input.predict_on_', pred, '==true', sep=''), sliderInput (inputId = paste('predict_', pred, sep=''), label = '', step=(.1*(10^floor(log10(diff(range(ctree[[pred]])))))), min = floor(min(ctree[[pred]],na.rm=TRUE)), max = ceiling(max(ctree[[pred]],na.rm=TRUE)), value = signif(mean(ctree[[pred]],na.rm=TRUE),3)), hr)}
+
+# Get the land use categories that have more than 400 trees (we will ignore the rest)
+main_lu_cats <- names(which(table(ctree$LU)>400))
+max_abundance_level <- 10
+var_descs <- all_predictors_quantitative
+
+get_top_spps <- function (ctree, lu_cats, limit)
+{
+      top_spps_names = NULL
+      top_spps_lu = list()
+      # Get the top x species for each land use, plus combine them into a single list
+      for (lu_cat in lu_cats)
+      {
+            t <- sort(table(factor(ctree$GENUSSPECI[ctree$LU==lu_cat])), decreasing = TRUE)[1:limit,drop=FALSE]
+            for (i in seq(1:nrow(t))) {t[i]<-i}
+            top_spps_lu[[lu_cat]] <- t
+            top_spps_names <- unique(c(top_spps_names, names(t)))
+      }
+      
+      top_spps <- matrix(NA, nrow=length(top_spps_names), ncol=length(lu_cats))
+      rownames(top_spps) <- top_spps_names
+      colnames(top_spps) <- lu_cats
+      
+      # Sum up each abundant species across all of the land uses
+      for (lu_cat in lu_cats)
+      {
+            for (spp in names(top_spps_lu[[lu_cat]]))
+            {
+                  top_spps[spp,lu_cat] = top_spps_lu[[lu_cat]][[spp]] + ifelse(is.na(top_spps[spp,lu_cat]), 0, top_spps[spp,lu_cat])
+            }
+      }
+      return (top_spps)
+}
+top_spps <- get_top_spps (ctree, main_lu_cats, max_abundance_level)
+
 
 
 label_font <- element_text(family="sans", color='black', size=16)
 data_font <- element_text(family="sans", face="bold", color='black', size=12)
 
 # Define UI
-ui <- fluidPage(theme = shinytheme("lumen"),
-                tags$head(tags$style(HTML(".shiny-notification {height:100px; width:600px; position:fixed; opacity:1.0; top:calc(50% - 50px);; left:calc(50% - 300px);;}"))),
+ui <- navbarPage("DuPage County Tree Data", theme = shinytheme("cyborg"), selected = "Model",
+                tags$head(tags$style(HTML("
+                                          .shiny-notification {height:100px; width:600px; position:fixed; opacity:1.0; top:calc(50% - 50px);; left:calc(50% - 300px);;}
+                                          .table.shiny-table > tbody > tr > td {padding-top: 0px; padding-bottom: 0px; line-height: 1;}
+                                          .checkbox {margin-bottom: 0px;}
+                                          .radio {margin-bottom: 0px;}
+                                          "))),
                 useShinyjs(),
-                titlePanel("DuPage County Tree Data"),
+                tabPanel(
+                      title="Model",
+#                titlePanel("DuPage County Tree Data"),
 #                shinythemes::themeSelector(),
-                fluidRow 
-                (
-                      column 
-                      ( 
-                            width=12,
+                  
                             tabsetPanel
                             (
-                                  selected = 'Model',
+                                  selected = p(icon("cog", lib = "glyphicon"),'Data'),
                                   tabPanel
                                   (
-                                        title='Data',
-                                        
-                                        
-                                        
+                                        id="data",
+                                        title=p(icon("cog", lib = "glyphicon"),'Data'), 
                                         fluidRow 
                                         (
                                               column 
                                               ( 
-                                                    width=3,
+                                                    width=6,
                                                     wellPanel
                                                     ( 
                                                           radioButtons (inputId = "filter_species_set", label = strong("Species Set"), choices = species_sets, selected = species_sets[1]),
                                                           checkboxInput (inputId = "filter_species_set_others", label = "Include others", value = TRUE),
                                                           hr,
-                                                          checkboxInput (inputId = "filter_advanced", label = "Advanced filters", value = FALSE)
-                                                    )
-                                              )
-                                        ),
-                                        fluidRow 
-                                        (
-                                              column 
-                                              ( 
-                                                    width=3,
-                                                    conditionalPanel
-                                                    ( 
-                                                          condition = 'input.filter_advanced == true', 
-                                                          wellPanel
-                                                          ( 
-                                                                checkboxGroupInput (inputId = "filter_land_use", label = strong("Land Use"), choices = levels(ctree$LU), selected = levels(ctree$LU))
-                                                          )
-                                                    )
-                                              ),
-                                              column 
-                                              ( 
-                                                    width=3,
-                                                    conditionalPanel
-                                                    ( 
-                                                          condition = 'input.filter_advanced == true', 
-                                                          wellPanel
-                                                          (  
-                                                                checkboxGroupInput (inputId = "filter_model_predictors", label = strong("Model Predictors"), choices = all_predictors, selected = all_predictors)
-                                                          )
-                                                    )
-                                              ),
-                                              column 
-                                              ( 
-                                                    width=2,
-                                                    conditionalPanel
-                                                    ( 
-                                                          condition = 'input.filter_advanced == true', 
-                                                          wellPanel
-                                                          ( 
-                                                                actionButton(inputId = "save_models", label = strong('Save models'))
+                                                          checkboxInput (inputId = "filter_model_cache", label = "Model cache management", value = FALSE),
+                                                          fluidRow 
+                                                          (
+                                                                column 
+                                                                (
+                                                                      width=8,
+                                                                      conditionalPanel
+                                                                      ( 
+                                                                            condition = 'input.filter_model_cache == true', 
+                                                                            wellPanel
+                                                                            ( 
+                                                                                  actionButton(inputId = "models_save_local", label = strong('Save models to local cache'), icon("save", lib = "glyphicon")),
+                                                                                  actionButton(inputId = "models_clear_local", label = strong('Clear local cache'), icon("trash", lib = "glyphicon"))
+                                                                            )
+                                                                      )
+                                                                )
+                                                          ),
+
+                                                          hr,
+                                                          checkboxInput (inputId = "filter_advanced", label = "Advanced filters", value = FALSE),
+                                                          fluidRow 
+                                                          (
+                                                                column 
+                                                                ( 
+                                                                      width=6,
+                                                                      conditionalPanel
+                                                                      ( 
+                                                                            condition = 'input.filter_advanced == true', 
+                                                                            wellPanel
+                                                                            ( 
+                                                                                  checkboxGroupInput (inputId = "filter_land_use", label = strong("Land Use"), choices = levels(ctree$LU), selected = levels(ctree$LU))
+                                                                            )
+                                                                      )
+                                                                ),
+                                                                column 
+                                                                ( 
+                                                                      width=6,
+                                                                      conditionalPanel
+                                                                      ( 
+                                                                            condition = 'input.filter_advanced == true', 
+                                                                            wellPanel
+                                                                            (  
+                                                                                  checkboxGroupInput (inputId = "filter_model_predictors", label = strong("Model Predictors"), choices = all_predictors, selected = all_predictors)
+                                                                            )
+                                                                      )
+                                                                )
                                                           )
                                                     )
                                               )
                                         )
-                                        
                                   ),
                                   
 
                                   tabPanel
                                   (
-                                        title='Model',
+                                        id="model",
+                                        title=p(icon("stats", lib = "glyphicon"),'Model'), 
                                         fluidRow 
                                         (
                                               column 
@@ -183,8 +230,8 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                                     width=8,
                                                     wellPanel
                                                     (  
-                                                          width=8, style = "overflow-y:scroll; min-height: 350px; max-height: 350px",
-                                                          plotOutput(outputId = "probability_plot", width = '600px', height = "300px", dblclick = "plot_dblclick",  brush = brushOpts(id = "plot_brush", resetOnNew = TRUE))
+                                                          width=8, style = "max-width: 800px", 
+                                                          plotOutput(outputId = "probability_plot", height = '300px', dblclick = "plot_dblclick",  brush = brushOpts(id = "plot_brush", resetOnNew = TRUE))
                                                     )
                                               ),
                                               column 
@@ -249,7 +296,8 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                   ),
                                   tabPanel
                                   (
-                                        title='Predict',
+                                        id="predict",
+                                        title=p(icon("dashboard", lib = "glyphicon"),'Predict'), 
                                         column 
                                         ( 
                                               width=3,
@@ -257,7 +305,6 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                               (
                                                     width=3,
                                                     lapply (all_predictors_quantitative, function (i) {pred_row(i)}),
-                                                    #selectInput("predict_LU", label = strong('Land Use'),  choices = levels(ctree$LU), selected = levels(ctree$LU)[1])
                                                     selectInput("predict_LU", label = strong('Land Use'),  choices = levels(ctree$LU), selected = "Street tree")
                                               )
                                         ),
@@ -271,15 +318,65 @@ ui <- fluidPage(theme = shinytheme("lumen"),
                                               ),
                                               wellPanel
                                               (  
-                                                    width=5, 
+                                                    width=5,
+                                                    style="td line-height:0px; td padding-top: 0px, td padding-bottom: 0px; #shiny-html-output td color: #4d3a7d;",
                                                     tableOutput(outputId = "out_prediction")
                                               )
                                         )
                                   )
                             )
-                      )
-                )
-                
+                  ),
+                  tabPanel
+                  (
+                        title="Description",
+                        tabsetPanel
+                        (
+                              selected = "Species Frequency by Land Use",
+                              tabPanel
+                              (
+                                    id="data",
+                                    title="Species Frequency by Land Use", 
+                                    fluidRow (
+                                          column (
+                                                width=3,
+                                                wellPanel (
+                                                      sliderInput (inputId = "ui_abundance_level", label = strong("Abundance level"),  min=1, max=max_abundance_level, value=4),
+                                                      checkboxGroupInput (inputId = "ui_species", label = strong("Species"),  choices = character(0), selected = character(0)),
+                                                      actionButton("ui_clear_species", label = strong("Clear"))
+                                                )
+                                          ),
+                                          column (
+                                                width=3,
+                                                wellPanel (
+                                                      selectInput (inputId = "ui_var", label = strong("Measurement"),  choices=var_descs, selected=names(var_descs)[1])
+                                                ),
+                                                wellPanel (
+                                                      sliderInput (inputId = "ui_bins", label = strong("Quantiles"),  min=1, max=10, value=4)
+                                                ),
+                                                wellPanel (
+                                                      checkboxGroupInput (inputId = "ui_land_use", label = strong("Land use"),  choices = main_lu_cats, selected = main_lu_cats),
+                                                      actionButton("ui_clear_land_use", label = strong("Clear"))
+                                                )
+                                          ),
+                                          column (
+                                                width=6,
+                                                wellPanel (
+                                                      style = "overflow-y:scroll; min-height: 300px; max-height: 1000px",
+                                                      uiOutput(outputId = "ui_chart", width = '600px', height = "300px")
+                                                ),
+                                                fluidRow (
+                                                      column (
+                                                            width = 1,
+                                                            actionButton("ui_flip_chart", label = strong("Flip"))
+                                                      ) 
+                                                      
+                                                )
+                                          )
+                                    )
+                              )
+                        )
+                  )
+
 )
 
 # Define server function
@@ -294,11 +391,13 @@ server <- function(input, output, session)
                   species_names_all = NULL,                 # List of species name in the current "species set" (after filtering)  
                   x = NULL,                                 # Zoomable x coordinate
                   y = NULL,                                 # Zoomable y coordinate
-                  run_predict_go = FALSE)                   # Flip the settng to trigger an update on the predictions
-      
-      
-      
-      
+                  run_predict_go = FALSE,                   # Flip the setting to trigger an update on the predictions
+                  abundance_level = 0,
+                  display_species_list = vector("character"),   # List of species to display
+                  selected_species_list = "Acer platanoides",  # Selected species (including those not dislayed)
+                  land_use_list = vector("character"),
+                  flip_chart = TRUE)
+
   
       ################################################################################################################
       # 
@@ -508,7 +607,168 @@ server <- function(input, output, session)
       })
       
 
-
+      
+      ################################################################################################################
+      # 
+      # Species be species frequence by landuse tab
+      # 
+      ################################################################################################################
+      
+      get_species <- function(ctree, lu_cats, abundance_level)
+      {
+            spps <- vector('character')
+            for (lu_cat in lu_cats)
+            {
+                  spps <- unique(c(spps, na.omit(rownames(top_spps[top_spps[,lu_cat]<=abundance_level,,drop=FALSE]))))
+            }
+            return (sort(spps))
+            
+      }
+      
+      assign_quantiles <- function(full=ctree, var='HEIGHT_MEAN', num_bins=5)
+      {
+            # Calculate the break points - evenly spread acress the range
+            val_range <- range(full[[var]], na.rm=TRUE)
+            min <- as.integer(floor(val_range[1]))
+            max <- as.integer(ceiling(val_range[2]))
+            
+            if (num_bins == 1)
+            {
+                  full$cat[!is.na(full[[var]])] <- paste(min, '-' , max,sep='')
+                  full$cat[is.na(full[[var]])] <- "Missing"
+            }
+            else
+            {
+                  # Bin the specified variable
+                  full$cat <- cut2(full[[var]], g=num_bins)
+                  # Pretty up the level names
+                  breaks <- as.character(signif(round(cut2(full[[var]], g=num_bins, onlycuts=TRUE),digits=3),digits=3))
+                  labels <- vector("character")
+                  for (i in seq(1,length(breaks)-1))
+                  {
+                        labels <- c(labels, paste(breaks[i],"-",breaks[i+1]))
+                  }
+                  levels(full$cat) <- labels
+            }
+            return(full)
+      }
+      
+      # Observe the abundance level slider
+      observeEvent(input$ui_abundance_level, {
+            r_values$abundance_level <- input$ui_abundance_level
+            update_species_list()
+      })
+      
+      # Observe the land use checkbox list
+      observeEvent(input$ui_land_use, {
+            r_values$land_use_list <- input$ui_land_use
+            update_species_list()
+      },ignoreNULL=FALSE)
+      
+      # Observe the button to clear the selected land use
+      observeEvent(input$ui_clear_land_use, {
+            updateCheckboxGroupInput(session, "ui_land_use", choices = main_lu_cats, selected = NULL)
+      })
+      
+      # Observe the species checkbox list
+      observeEvent(input$ui_species, {
+            selected <- input$ui_species
+            not_selected <- setdiff(r_values$display_species_list, selected)
+            r_values$selected_species_list <- setdiff(unique(c(r_values$selected_species_list, selected)), not_selected)
+      },ignoreNULL=FALSE)
+      
+      # Observe the button to clear the selected species
+      observeEvent(input$ui_clear_species, {
+            r_values$selected_species_list <- NULL
+            update_species_list()
+      })
+      
+      # Observe the button to flip the chart
+      observeEvent(input$ui_flip_chart, {
+            r_values$flip_chart <- !r_values$flip_chart
+      })
+      
+      update_species_list <- reactive({
+            r_values$display_species_list <- get_species(ctree, r_values$land_use_list, r_values$abundance_level)
+            updateCheckboxGroupInput(session, "ui_species", choices = r_values$display_species_list, selected = r_values$selected_species_list)
+      })
+      
+      
+      
+      # Plot the chart (note that this is wrapped by renderUI to allow the height to vary)
+      output$contents <- renderPlot({ 
+            # Keep only the trees in the requested set of land uses
+            ctree <- ctree[ctree$LU %in% r_values$land_use_list,]
+            if(nrow(ctree)==0)
+            {
+                  return (NULL)
+            }
+            ctree$LU <- factor(ctree$LU)
+            # Categorize the species by the requested variable
+            ctree <- assign_quantiles (ctree, input$ui_var, input$ui_bins)
+            
+            # Create a data frame to collect the data
+            df_cols <- c("Species", "LandUse", levels(ctree$cat))
+            fits <- setNames(data.frame(matrix(ncol=length(df_cols), nrow = 0)), df_cols)
+            for(sp in input$ui_species)
+            {
+                  ctree[,'occur'] = ifelse(ctree[,'GENUSSPECI']==sp, 1,0)
+                  fit <- tapply(ctree$occur, list(ctree$LU, ctree$cat), mean, na.rm=TRUE)
+                  fit <- cbind(Species=sp, LandUse=rownames(fit), as.data.frame(fit))
+                  fits <- rbind(fits,fit) 
+            }
+            if (nrow(fits) == 0)
+            {
+                  return (NULL)
+            }
+            # Get the range for the y axis
+            fits <- replace(fits,is.na(fits),0)
+            yrange <- range(as.numeric(as.matrix(fits[3:ncol(fits)])),na.rm=TRUE)
+            
+            # Melt the dataframe to prepare it for plotting. This results in 4 columns: 1) Species, 2) LandUse, 3)Category, 4) fit value
+            fits <- melt(fits, c(id="Species","LandUse"), variable.name="Category")
+            
+            if (r_values$flip_chart)
+            {
+                  # Plot the results
+                  g <- ggplot(fits,aes(LandUse,value, fill=as.factor(Category))) +
+                        geom_bar(position="dodge", stat="identity") +
+                        facet_wrap(~Species, ncol=1) +
+                        xlab('Land Use') +
+                        ylab('Relative frequency') +
+                        scale_fill_discrete(name=names(var_descs)[which(var_descs==input$ui_var)]) +
+                        theme(axis.text.x=element_text(angle = -30, hjust = 0))
+                  # Add vertical separator lines if more than one land use category
+                  if (length(levels(fits$LandUse)) > 1)
+                  {
+                        g <- g + geom_vline(xintercept = seq(1.5,length(unique(fits$LandUse))-0.5,1))
+                  }
+            }
+            else
+            {
+                  g <- ggplot(fits,aes(Category,value, fill=as.factor(LandUse))) +
+                        geom_bar(position="dodge", stat="identity") +
+                        facet_wrap(~Species, ncol=1) +
+                        xlab(names(var_descs)[which(var_descs==input$ui_var)]) +
+                        ylab('Relative frequency') +
+                        scale_fill_discrete(name="Land use") +
+                        theme(axis.text.x=element_text(angle = -30, hjust = 0))
+                  # Add vertical separator lines if more than one measurement category
+                  if (length(levels(fits$Category)) > 1)
+                  {
+                        g <- g + geom_vline(xintercept = seq(1.5,length(unique(fits$Category))-0.5,1))
+                  }
+            }
+            return (g)
+      })
+      
+      
+      # Update the widget height to match the number of facets, then call the function that performs the plot
+      output$ui_chart <- renderUI({
+            height <- ifelse (length(input$ui_species)==0, 0, 200+(length(input$ui_species)-1)*100)
+            plotOutput("contents", height = height, width = "100%")
+      })
+      
       
       ################################################################################################################
       # 
@@ -574,13 +834,26 @@ server <- function(input, output, session)
       
       
       # Save cached models to local workspace
-      observeEvent (input$save_models, {
-            saveRDS (g_models, file=models_local_file)
+      observeEvent (input$models_save_local, {
+            withProgress (message="Saving model cache to local workspace", detail=models_local_file, value=.2, {
+                  incProgress(.2, detail=models_local_file)
+                  saveRDS (g_models, file=models_local_file)
+                  Sys.sleep(2)
+                  incProgress(.9)
+            })
       })
       
+      # Clear the model cache in the local workspace and in memory
+      observeEvent (input$models_clear_local, {
+            withProgress (message="Clearing model cache in local workspace", detail=models_local_file, value=.2, {
+                  if (file.exists(models_local_file)) file.remove(models_local_file)
+                  g_models <<- list()
+                  Sys.sleep(2)
+                  incProgress(.9)
+            })
+      })
       
-      
-      
+
       ################################################################################################################
       # 
       # Model tab
@@ -764,9 +1037,10 @@ server <- function(input, output, session)
       
       get_species_prediction <- reactive ({
             model <- get_model()
-            model_input <- t(matrix(data=predict_go()$Value,dimnames=list(predict_go()$Predictor)))
-            lu_weight <- ifelse('LU' %in% input$filter_model_predictors, model$pred_c_specs[['LU']]$cat_weights[[input$predict_LU]], 1)
+            active_widgets <- predict_go()$Predictor %in% input$filter_model_predictors
+            model_input <- t(matrix(data=predict_go()$Value[active_widgets],dimnames=list(predict_go()$Predictor[active_widgets])))
             p <- predict_multinomial(model, model_input, input$predict_LU)
+            lu_weight <- ifelse('LU' %in% input$filter_model_predictors, model$pred_c_specs[['LU']]$cat_weights[[input$predict_LU]], 1)
             p <- data.frame(Probability=t(p/lu_weight))
             p$Species <- rownames(p)
             return (p)
