@@ -76,12 +76,23 @@ all_predictors_quantitative <- all_predictors_quantitative[order(names(all_predi
 all_predictors_categorical <- c('Land use' = 'LU')
 all_predictors <- c(all_predictors_quantitative, all_predictors_categorical)
 
+do_scale=TRUE # still in test
+pred_q_range <- matrix(0, nrow=length(all_predictors_quantitative), ncol=4)
+dimnames(pred_q_range) <- list(all_predictors_quantitative, c('min', 'max', 'diff', 'mean'))
+for (predictor_quantitative in all_predictors_quantitative)
+{
+      pred_q_range[predictor_quantitative, 'min'] <- min(ctree[[predictor_quantitative]], na.rm=TRUE)
+      pred_q_range[predictor_quantitative, 'max'] <- max(ctree[[predictor_quantitative]], na.rm=TRUE)
+      pred_q_range[predictor_quantitative, 'diff'] <- pred_q_range[predictor_quantitative, 'max'] - pred_q_range[predictor_quantitative, 'min']
+      pred_q_range[predictor_quantitative, 'mean'] <- mean(ctree[[predictor_quantitative]], na.rm=TRUE)
+}
+
 
 # Functions to allow prediction page to generated programatically
 pred_row <- function (pred) {return (list(cb(pred), sl(pred)))}
 hr <- tags$hr(style="height:1px;border:none;color:#333;background-color:#333;")
 cb <- function(pred) {checkboxInput (inputId = paste('predict_on_', pred, sep=''), label = strong(names(all_predictors_quantitative[all_predictors_quantitative==pred])), width = '600px', value = FALSE)} 
-sl <- function(pred) {conditionalPanel (condition = paste('input.predict_on_', pred, '==true', sep=''), sliderInput (inputId = paste('predict_', pred, sep=''), label = '', step=(.1*(10^floor(log10(diff(range(ctree[[pred]])))))), min = floor(min(ctree[[pred]],na.rm=TRUE)), max = ceiling(max(ctree[[pred]],na.rm=TRUE)), value = signif(mean(ctree[[pred]],na.rm=TRUE),3)), hr)}
+sl <- function(pred) {conditionalPanel (condition = paste('input.predict_on_', pred, '==true', sep=''), sliderInput (inputId = paste('predict_', pred, sep=''), label = '', step=(.1*(10^floor(log10(pred_q_range[pred,'diff'])))), min = floor(pred_q_range[pred,'min']), max = ceiling(pred_q_range[pred,'max']), value = signif(pred_q_range[pred,'mean'],3)), hr)}
 
 
 # Model cache
@@ -405,7 +416,6 @@ server <- function(input, output, session)
       # 
       ################################################################################################################  
 
-
       # Inputs:
       #     cf: coefficients matrix (including intercept) from multinomial model
       #     fullx: matrix - one row per prediction, one column per prediction variable
@@ -427,8 +437,6 @@ server <- function(input, output, session)
             return (result)
       }
       
-      
-      
 
       
       
@@ -443,6 +451,15 @@ server <- function(input, output, session)
             num_predictions <- nrow(m_preds_q_mx)
             prediction <- matrix(0, nrow=num_predictions, ncol=length(model$spps))
             colnames(prediction) <- model$spps
+            
+            # Scale predictors from 0 to 1
+            if (do_scale)
+            {
+                  for (pred_name_q in colnames(m_preds_q_mx))
+                  {
+                        m_preds_q_mx[,pred_name_q] <- as.vector(scale(m_preds_q_mx[,pred_name_q], center=pred_q_range[pred_name_q,'min'], scale=pred_q_range[pred_name_q,'diff']))
+                  }
+            }
             
             if (length(model$pred_c_spec) == 0 )
             {
@@ -530,6 +547,7 @@ server <- function(input, output, session)
             
       }
       
+
       
       
       ################################################################################################################
@@ -577,7 +595,14 @@ server <- function(input, output, session)
                         cat_weights <- table(filter_data[[cat_pred_name]])/nrow(filter_data)
                         pred_c_specs[['LU']]  = list(cat_pred_name=cat_pred_name, cat_name_ref=cat_name_ref, cat_names_non_ref=cat_names_non_ref, cat_cf_names=cat_cf_names, cat_weights=cat_weights)
                   }
-                  
+             
+                  if (do_scale)
+                  {
+                        for (pred_name_q in input$filter_model_predictors[input$filter_model_predictors %in% all_predictors_quantitative])
+                        {
+                              filter_data[[pred_name_q]] <- as.vector(scale(filter_data[[pred_name_q]], center=pred_q_range[pred_name_q,'min'], scale=pred_q_range[pred_name_q,'diff']))
+                        }
+                  }
                   
                   withProgress (message="Generating multinomial model", value=0, {
                         incProgress(.2, detail="Wait - this can take minutes")
