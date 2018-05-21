@@ -252,7 +252,8 @@ ui <- navbarPage("DuPage County Tree Data", theme = shinytheme("cyborg"), select
                                                     (  
                                                           checkboxInput (inputId = "plot_stack", label = strong("Stack"), value=FALSE),
                                                           checkboxInput (inputId = "plot_observations", label = strong("Observations"), value=FALSE),
-                                                          checkboxInput (inputId = "show_statistics", label = strong("Show statistics"), value=FALSE)
+                                                          checkboxInput (inputId = "show_statistics", label = strong("Show statistics"), value=FALSE),
+                                                          checkboxInput (inputId = "show_p_values", label = strong("Show p-values"), value=FALSE)
                                                     )
                                               )
                                         ),
@@ -270,6 +271,25 @@ ui <- navbarPage("DuPage County Tree Data", theme = shinytheme("cyborg"), select
                                                                       title='Statistics',
                                                                       width=12, style = "overflow-y:scroll; max-height: 350px",
                                                                       tableOutput(outputId = "outText")
+                                                                )
+                                                          )
+                                                    )
+                                              )
+                                        ),
+                                        fluidRow 
+                                        (
+                                              column 
+                                              ( 
+                                                    width=12,
+                                                    (
+                                                          conditionalPanel
+                                                          ( 
+                                                                condition = 'input.show_p_values == true', 
+                                                                wellPanel
+                                                                (  
+                                                                      title='p-Values',
+                                                                      width=12, style = "overflow-y:scroll; max-height: 350px",
+                                                                      tableOutput(outputId = "out_p_values")
                                                                 )
                                                           )
                                                     )
@@ -604,19 +624,31 @@ server <- function(input, output, session)
                         }
                   }
                   
+                  
                   withProgress (message="Generating multinomial model", value=0, {
                         incProgress(.2, detail="Wait - this can take minutes")
-                        model <- multinom(paste('GENUSSPECI ~ ', predictors), data=filter_data, maxit=MAX_ITER)
+                        model <- multinom(as.formula(paste('GENUSSPECI ~ ', predictors)), data=filter_data, maxit=MAX_ITER)
                         model <- list(model_reduced=model, 
                                       cf=coef(model), 
                                       aic=model$AIC, 
-                                      r2=(1-(model$deviance/(update(model, . ~ 1,trace=F)$deviance))), 
+#                                      r2=(1-(model$deviance/(update(model, . ~ 1,trace=F)$deviance))), 
                                       spps=model$lev,
                                       ref_spp=model$lev[1],
                                       sample_size=nrow(filter_data),
                                       filter_land_use=input$filter_land_use,
                                       pred_names_q=input$filter_model_predictors[input$filter_model_predictors %in% all_predictors_quantitative],
                                       pred_c_specs=pred_c_specs)
+                        
+                        incProgress(.7, detail='Calculating p_values')
+                        z <- summary(model$model_reduced)$coefficients/summary(model$model_reduced)$standard.errors # from https://stats.stackexchange.com/questions/63222/getting-p-values-for-multinom-in-r-nnet-package
+                        p_values <- (1 - pnorm(abs(z), 0, 1)) * 2
+                        model$p_values <- p_values
+                        
+                        incProgress(.8, detail='Calculating R squared value')
+                        r2 <- (1-(model$model_reduced$deviance/(update(model$model_reduced, . ~ 1,trace=F)$deviance)))
+                        model$r2 <- r2
+                        
+                        incProgress(.9, detail='Reducing model')
                         model$model_reduced$fitted.values <- NULL
                         model$model_reduced$residuals <- NULL
                         model$model_reduced$weights <- NULL
@@ -625,7 +657,6 @@ server <- function(input, output, session)
                         attr(model$model_reduced$terms,".Environment") =c()
                         attr(model$model_reduced$formula,".Environment") =c()
                         g_models[[filter_hash]] <<- model
-                        incProgress(.9)
                   })
             }
             return (model)
@@ -971,7 +1002,19 @@ server <- function(input, output, session)
       })
       
   
-      
+      output$out_p_values <- renderTable({ 
+            model <- get_model()
+            df <- as.data.frame(t(model$p_values))
+            df <- df[,which(colnames(df) %in% input$species),drop=FALSE]
+            if (ncol(df) > 0 && nrow(df) > 0)
+            {
+                  return (df)
+            }
+            else
+            {
+                  return (NULL)
+            }
+      }, rownames=TRUE, digits=3)
       
       
       
